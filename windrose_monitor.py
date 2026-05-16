@@ -232,6 +232,8 @@ class WindroseMonitor:
                 continue
 
             headers = [f"Authorization: Bearer {token}", f"Origin: {self.config['pterodactyl']['api_url']}"]
+            # Some Wings setups require the pterodactyl subprotocol during handshake
+            headers.append('Sec-WebSocket-Protocol: pterodactyl')
 
             try:
                 # Use websocket-client to connect
@@ -239,8 +241,15 @@ class WindroseMonitor:
                     host = urlparse(socket_url).netloc
                 except Exception:
                     host = socket_url
-                logger.info(f"Connecting to WebSocket at {host}")
-                ws = websocket.create_connection(socket_url, timeout=15, header=headers, sslopt={"cert_reqs": ssl.CERT_REQUIRED})
+                logger.info(f"Connecting to WebSocket at {host} (requesting subprotocol 'pterodactyl')")
+                # Request the 'pterodactyl' subprotocol explicitly; many Wings nodes expect it
+                ws = websocket.create_connection(
+                    socket_url,
+                    timeout=15,
+                    header=headers,
+                    sslopt={"cert_reqs": ssl.CERT_REQUIRED},
+                    subprotocols=['pterodactyl']
+                )
                 # Authenticate
                 auth_msg = json.dumps({"event": "auth", "args": [token]})
                 ws.send(auth_msg)
