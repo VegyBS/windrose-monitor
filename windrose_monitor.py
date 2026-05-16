@@ -14,6 +14,7 @@ import subprocess
 import sys
 import threading
 import ssl
+import base64
 from collections import deque
 try:
     import websocket
@@ -69,6 +70,10 @@ class WindroseMonitor:
         self._ws_lock = threading.Lock()
         self._ws_thread = None
         self._ws_stop = threading.Event()
+
+        # Cached websocket token data to avoid hitting token endpoint repeatedly
+        self._ws_token_data = None
+        self._ws_token_expiry = 0
 
         # Start websocket listener thread if websocket-client is available
         if websocket is not None:
@@ -199,13 +204,18 @@ class WindroseMonitor:
 
     def _get_websocket_token(self) -> Optional[dict]:
         """Request a temporary websocket token and socket URL from the Panel."""
+        # Return cached token if still valid
         try:
+            if self._ws_token_data and self._ws_token_expiry and time.time() < (self._ws_token_expiry - 30):
+                return self._ws_token_data
+
             url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/websocket"
             resp = self.api_session.get(url, timeout=10, headers={
                 'Accept': 'Application/vnd.pterodactyl.v1+json'
             })
             resp.raise_for_status()
             data = resp.json().get('data')
+
             if data and isinstance(data, dict):
                 socket = data.get('socket')
                 try:
@@ -213,6 +223,25 @@ class WindroseMonitor:
                 except Exception:
                     host = 'unknown'
                 logger.info(f"Obtained websocket token, socket host: {host}")
+
+            # Cache token expiry if present in JWT
+            token = data.get('token') if data else None
+            if token:
+                try:
+                    parts = token.split('.')
+                    if len(parts) >= 2:
+                        payload = parts[1]
+                        padding = '=' * ((4 - len(payload) % 4) % 4)
+                        decoded = base64.urlsafe_b64decode(payload + padding)
+                        payload_json = json.loads(decoded)
+                        exp = int(payload_json.get('exp', 0))
+                        self._ws_token_expiry = exp
+                        self._ws_token_data = data
+                except Exception:
+                    # If parsing fails, still store the data without expiry
+                    self._ws_token_data = data
+                    self._ws_token_expiry = 0
+
             return data
         except requests.exceptions.RequestException as e:
             logger.warning(f"Could not obtain websocket token: {e}")
