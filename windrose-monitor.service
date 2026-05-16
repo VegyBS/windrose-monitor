@@ -8,6 +8,10 @@ Wants=network-online.target
 Type=simple
 User=windrose-monitor
 Group=windrose-monitor
+
+# Load environment variables from .env file
+EnvironmentFile=/etc/windrose-monitor/.env
+
 ExecStart=/usr/local/bin/windrose-monitor
 Restart=on-failure
 RestartSec=10

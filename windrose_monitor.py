@@ -14,6 +14,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set, Optional
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -37,16 +41,62 @@ class WindroseMonitor:
         })
         
     def _load_config(self, config_path: str) -> Dict:
-        """Load configuration from JSON file"""
-        try:
-            with open(config_path, 'r') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logger.error(f"Config file not found: {config_path}")
+        """Load configuration from environment variables or JSON file
+        
+        Priority:
+        1. Environment variables (.env file)
+        2. config.json file (fallback)
+        """
+        config = {
+            'pterodactyl': {
+                'api_url': os.getenv('PTERODACTYL_API_URL', ''),
+                'api_token': os.getenv('PTERODACTYL_API_TOKEN', ''),
+                'server_id': os.getenv('PTERODACTYL_SERVER_ID', '')
+            },
+            'discord': {
+                'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', '')
+            },
+            'monitoring': {
+                'check_interval_seconds': int(os.getenv('CHECK_INTERVAL_SECONDS', '20')),
+                'log_patterns': {
+                    'reserved_accounts_header': 'Reserved Accounts',
+                    'disconnected_accounts_header': 'Disconnected Accounts'
+                }
+            },
+            'cpu_profile': {
+                'enabled': os.getenv('CPU_PROFILE_ENABLED', 'true').lower() == 'true',
+                'performance_profile': os.getenv('CPU_PROFILE_PERFORMANCE', 'performance'),
+                'balanced_profile': os.getenv('CPU_PROFILE_BALANCED', 'balance_power'),
+                'cpu_freq_path': os.getenv('CPU_FREQ_PATH', '/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference')
+            },
+            'state_file': os.getenv('STATE_FILE', '/var/lib/windrose-monitor/state.json'),
+            'log_file': os.getenv('LOG_FILE', '/var/log/windrose-monitor.log')
+        }
+        
+        # If env vars not fully populated, try loading from config file as fallback
+        if not config['pterodactyl']['api_token'] and Path(config_path).exists():
+            try:
+                with open(config_path, 'r') as f:
+                    file_config = json.load(f)
+                    # Merge file config with env config (env takes precedence)
+                    for section in file_config:
+                        if section not in config or not config[section]:
+                            config[section] = file_config[section]
+            except json.JSONDecodeError as e:
+                logger.warning(f"Invalid JSON in config file: {e}")
+        
+        # Validate required fields
+        if not config['pterodactyl']['api_token']:
+            logger.error("Pterodactyl API token not configured (set PTERODACTYL_API_TOKEN env var or in config.json)")
             sys.exit(1)
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in config file: {e}")
+        if not config['pterodactyl']['server_id']:
+            logger.error("Pterodactyl server ID not configured (set PTERODACTYL_SERVER_ID env var or in config.json)")
             sys.exit(1)
+        if not config['discord']['webhook_url']:
+            logger.error("Discord webhook URL not configured (set DISCORD_WEBHOOK_URL env var or in config.json)")
+            sys.exit(1)
+        
+        return config
     
     def _load_state(self) -> Dict:
         """Load state from JSON file"""
