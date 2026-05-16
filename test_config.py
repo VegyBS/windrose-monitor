@@ -178,7 +178,17 @@ def test_discord_webhook(config: dict):
         return False
 
 def test_cpu_frequency_scaling():
-    """Test CPU frequency scaling capability"""
+    """Test CPU frequency scaling capability
+    
+    In CI mode: Skipped (not applicable in GitHub Actions)
+    Local mode: Tests actual availability
+    """
+    if CI_MODE:
+        print("\nTesting CPU Frequency Scaling...")
+        print("  ⊘ Skipped in CI mode (infrastructure test)")
+        print("  ✓ Validation skipped - will be tested on actual server")
+        return True
+    
     print("\nTesting CPU Frequency Scaling...")
     
     try:
@@ -203,7 +213,17 @@ def test_cpu_frequency_scaling():
         return False
 
 def test_state_file_permissions():
-    """Test state file directory permissions"""
+    """Test state file directory permissions
+    
+    In CI mode: Skipped (not applicable in GitHub Actions)
+    Local mode: Tests actual permissions
+    """
+    if CI_MODE:
+        print("\nTesting State File Permissions...")
+        print("  ⊘ Skipped in CI mode (infrastructure test)")
+        print("  ✓ Validation skipped - will be tested on actual server")
+        return True
+    
     print("\nTesting State File Permissions...")
     
     try:

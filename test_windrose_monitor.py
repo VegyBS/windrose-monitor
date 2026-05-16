@@ -17,13 +17,33 @@ class TestPlayerListParsing(unittest.TestCase):
     """Test log parsing for player detection"""
     
     def setUp(self):
-        """Set up test fixtures"""
-        self.sample_logs_with_players = """
+        """Set up test fixtures with realistic log format"""
+        # Realistic format with Connected and Reserved Accounts
+        self.sample_logs_with_connected_and_reserved = """
+[2026-05-16 10:30:00] Server Status Update
+Connected Accounts
+    1. Name 'PlayerOne'. AccountId 'ID123'. State 'ReadyToPlay'. NetAddress '192.168.1.1'
+    2. Name 'PlayerTwo'. AccountId 'ID456'. State 'ReadyToPlay'. NetAddress '192.168.1.2'
+Reserved Accounts
+    1. Name 'PlayerThree'. AccountId 'ID789'. State 'Reserved'. NetAddress '192.168.1.3'
+Disconnected Accounts
+    1. Name 'OldPlayer'. State 'SaidFarewell'. AccountId 'IDXYZ'
+"""
+        
+        self.sample_logs_only_connected = """
+[2026-05-16 10:30:00] Server Status Update
+Connected Accounts
+    1. Name 'AlicePlayer'. AccountId 'IDABC'. State 'ReadyToPlay'. NetAddress '10.0.0.1'
+    2. Name 'BobPlayer'. AccountId 'IDDEF'. State 'ReadyToPlay'. NetAddress '10.0.0.2'
+Reserved Accounts
+Disconnected Accounts
+"""
+        
+        self.sample_logs_only_reserved = """
 [2026-05-16 10:30:00] Server Status Update
 Connected Accounts
 Reserved Accounts
-  PlayerOne
-  PlayerTwo
+    1. Name 'CharliePlayer'. AccountId 'IDGHI'. State 'Reserved'. NetAddress '10.0.0.3'
 Disconnected Accounts
 """
         
@@ -32,93 +52,177 @@ Disconnected Accounts
 Connected Accounts
 Reserved Accounts
 Disconnected Accounts
-  PlayerOne
+    1. Name 'OldPlayer'. State 'SaidFarewell'. AccountId 'IDXYZ'
 """
         
-        self.sample_logs_multi_players = """
+        self.sample_logs_empty = """
 [2026-05-16 10:30:00] Server Status Update
 Connected Accounts
 Reserved Accounts
-  Alice
-  Bob
-  Charlie
 Disconnected Accounts
-  OldPlayer
 """
     
-    def test_parse_players_with_reserved_accounts(self):
-        """Test parsing when there are reserved accounts"""
-        # This tests the core parsing logic
-        logs = self.sample_logs_with_players
+    def test_parse_connected_and_reserved_accounts(self):
+        """Test parsing when players are in both Connected and Reserved"""
+        logs = self.sample_logs_with_connected_and_reserved
         
-        # Extract Reserved Accounts section
         players = set()
         lines = logs.split('\n')
+        current_section = None
         
         for i, line in enumerate(lines):
-            if 'Reserved Accounts' in line:
-                j = i + 1
-                while j < len(lines):
-                    next_line = lines[j].strip()
-                    
-                    if 'Disconnected Accounts' in lines[j] or 'Connected Accounts' in lines[j]:
-                        break
-                    
-                    if next_line and not next_line.startswith('['):
-                        players.add(next_line)
-                    
-                    j += 1
+            if 'Connected Accounts' in line:
+                current_section = 'connected'
+                continue
+            elif 'Reserved Accounts' in line:
+                current_section = 'reserved'
+                continue
+            elif 'Disconnected Accounts' in line:
                 break
+            
+            if current_section in ['connected', 'reserved']:
+                if "Name '" in line:
+                    try:
+                        start = line.find("Name '") + len("Name '")
+                        end = line.find("'", start)
+                        if start > len("Name '") - 1 and end > start:
+                            player_name = line[start:end].strip()
+                            if player_name:
+                                players.add(player_name)
+                    except (ValueError, IndexError):
+                        continue
         
-        self.assertEqual(players, {'PlayerOne', 'PlayerTwo'})
+        self.assertEqual(players, {'PlayerOne', 'PlayerTwo', 'PlayerThree'})
     
-    def test_parse_empty_reserved_accounts(self):
-        """Test parsing when no players are reserved"""
+    def test_parse_only_connected_accounts(self):
+        """Test parsing when players are only in Connected section"""
+        logs = self.sample_logs_only_connected
+        
+        players = set()
+        lines = logs.split('\n')
+        current_section = None
+        
+        for i, line in enumerate(lines):
+            if 'Connected Accounts' in line:
+                current_section = 'connected'
+                continue
+            elif 'Reserved Accounts' in line:
+                current_section = 'reserved'
+                continue
+            elif 'Disconnected Accounts' in line:
+                break
+            
+            if current_section in ['connected', 'reserved']:
+                if "Name '" in line:
+                    try:
+                        start = line.find("Name '") + len("Name '")
+                        end = line.find("'", start)
+                        if start > len("Name '") - 1 and end > start:
+                            player_name = line[start:end].strip()
+                            if player_name:
+                                players.add(player_name)
+                    except (ValueError, IndexError):
+                        continue
+        
+        self.assertEqual(players, {'AlicePlayer', 'BobPlayer'})
+    
+    def test_parse_only_reserved_accounts(self):
+        """Test parsing when players are only in Reserved section"""
+        logs = self.sample_logs_only_reserved
+        
+        players = set()
+        lines = logs.split('\n')
+        current_section = None
+        
+        for i, line in enumerate(lines):
+            if 'Connected Accounts' in line:
+                current_section = 'connected'
+                continue
+            elif 'Reserved Accounts' in line:
+                current_section = 'reserved'
+                continue
+            elif 'Disconnected Accounts' in line:
+                break
+            
+            if current_section in ['connected', 'reserved']:
+                if "Name '" in line:
+                    try:
+                        start = line.find("Name '") + len("Name '")
+                        end = line.find("'", start)
+                        if start > len("Name '") - 1 and end > start:
+                            player_name = line[start:end].strip()
+                            if player_name:
+                                players.add(player_name)
+                    except (ValueError, IndexError):
+                        continue
+        
+        self.assertEqual(players, {'CharliePlayer'})
+    
+    def test_parse_empty_accounts(self):
+        """Test parsing when no players are present"""
         logs = self.sample_logs_no_players
         
         players = set()
         lines = logs.split('\n')
+        current_section = None
         
         for i, line in enumerate(lines):
-            if 'Reserved Accounts' in line:
-                j = i + 1
-                while j < len(lines):
-                    next_line = lines[j].strip()
-                    
-                    if 'Disconnected Accounts' in lines[j] or 'Connected Accounts' in lines[j]:
-                        break
-                    
-                    if next_line and not next_line.startswith('['):
-                        players.add(next_line)
-                    
-                    j += 1
+            if 'Connected Accounts' in line:
+                current_section = 'connected'
+                continue
+            elif 'Reserved Accounts' in line:
+                current_section = 'reserved'
+                continue
+            elif 'Disconnected Accounts' in line:
                 break
+            
+            if current_section in ['connected', 'reserved']:
+                if "Name '" in line:
+                    try:
+                        start = line.find("Name '") + len("Name '")
+                        end = line.find("'", start)
+                        if start > len("Name '") - 1 and end > start:
+                            player_name = line[start:end].strip()
+                            if player_name:
+                                players.add(player_name)
+                    except (ValueError, IndexError):
+                        continue
         
+        # Should not include OldPlayer (from Disconnected section)
         self.assertEqual(len(players), 0)
     
-    def test_parse_multiple_players(self):
-        """Test parsing multiple players"""
-        logs = self.sample_logs_multi_players
+    def test_ignores_disconnected_accounts(self):
+        """Test that Disconnected Accounts section is completely ignored"""
+        logs = self.sample_logs_with_connected_and_reserved
         
         players = set()
         lines = logs.split('\n')
+        current_section = None
         
         for i, line in enumerate(lines):
-            if 'Reserved Accounts' in line:
-                j = i + 1
-                while j < len(lines):
-                    next_line = lines[j].strip()
-                    
-                    if 'Disconnected Accounts' in lines[j] or 'Connected Accounts' in lines[j]:
-                        break
-                    
-                    if next_line and not next_line.startswith('['):
-                        players.add(next_line)
-                    
-                    j += 1
-                break
+            if 'Connected Accounts' in line:
+                current_section = 'connected'
+                continue
+            elif 'Reserved Accounts' in line:
+                current_section = 'reserved'
+                continue
+            elif 'Disconnected Accounts' in line:
+                break  # Stop processing entirely
+            
+            if current_section in ['connected', 'reserved']:
+                if "Name '" in line:
+                    try:
+                        start = line.find("Name '") + len("Name '")
+                        end = line.find("'", start)
+                        if start > len("Name '") - 1 and end > start:
+                            player_name = line[start:end].strip()
+                            if player_name:
+                                players.add(player_name)
+                    except (ValueError, IndexError):
+                        continue
         
-        self.assertEqual(players, {'Alice', 'Bob', 'Charlie'})
+        # Should NOT contain OldPlayer
+        self.assertNotIn('OldPlayer', players)
 
 
 class TestPlayerStateDetection(unittest.TestCase):
@@ -168,7 +272,6 @@ class TestCPUProfileLogic(unittest.TestCase):
     
     def test_switch_to_performance_when_players_join(self):
         """Test that performance profile is set when player count > 0"""
-        previous_count = 0
         current_count = 1
         current_profile = 'balanced'
         
@@ -177,7 +280,6 @@ class TestCPUProfileLogic(unittest.TestCase):
     
     def test_switch_to_balanced_when_players_leave(self):
         """Test that balanced profile is set when player count == 0"""
-        previous_count = 2
         current_count = 0
         current_profile = 'performance'
         

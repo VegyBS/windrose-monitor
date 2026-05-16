@@ -138,34 +138,42 @@ class WindroseMonitor:
     def parse_player_list(self, logs: str) -> Set[str]:
         """Parse player list from logs
         
-        Looks for Reserved Accounts section which indicates current players
+        Players are in BOTH Connected Accounts and Reserved Accounts sections.
+        Disconnected Accounts is historical and should be ignored.
+        
+        Returns unique set of currently active players.
         """
         players = set()
         lines = logs.split('\n')
         
-        in_reserved = False
+        current_section = None
+        
         for i, line in enumerate(lines):
-            # Look for "Reserved Accounts" header
-            if self.config['monitoring']['log_patterns']['reserved_accounts_header'] in line:
-                in_reserved = True
-                # Check next lines for player names (non-empty lines before next header)
-                j = i + 1
-                while j < len(lines):
-                    next_line = lines[j].strip()
-                    
-                    # Stop if we hit another header
-                    if any(header in lines[j] for header in [
-                        'Connected Accounts',
-                        'Disconnected Accounts'
-                    ]):
-                        break
-                    
-                    # Add non-empty lines as player names
-                    if next_line and not next_line.startswith('['):
-                        players.add(next_line)
-                    
-                    j += 1
+            # Check which section we're in
+            if 'Connected Accounts' in line:
+                current_section = 'connected'
+                continue
+            elif 'Reserved Accounts' in line:
+                current_section = 'reserved'
+                continue
+            elif 'Disconnected Accounts' in line:
+                # Stop processing - we don't care about historical disconnects
                 break
+            
+            # Only parse Connected and Reserved sections
+            if current_section in ['connected', 'reserved']:
+                # Look for player name in format: "Name 'PlayerName'"
+                if "Name '" in line:
+                    try:
+                        # Extract player name from "Name 'PlayerName'."
+                        start = line.find("Name '") + len("Name '")
+                        end = line.find("'", start)
+                        if start > len("Name '") - 1 and end > start:
+                            player_name = line[start:end].strip()
+                            if player_name:  # Only add non-empty names
+                                players.add(player_name)
+                    except (ValueError, IndexError):
+                        continue
         
         return players
     
