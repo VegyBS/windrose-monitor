@@ -9,22 +9,62 @@ echo "║      Windrose Server Monitor - Installation Script         ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo ""
 
-# Check if running as root
+# --- Root check --------------------------------------------------------------
 if [ "$EUID" -ne 0 ]; then 
     echo "❌ This script must be run with sudo"
     exit 1
 fi
 
-# Check Python installation
-if ! command -v python3 &> /dev/null; then
-    echo "❌ Python 3 is not installed"
+# --- Detect installed Python versions ----------------------------------------
+echo "Detecting installed Python versions..."
+AVAILABLE_PYTHONS=()
+
+for VER in 3.12 3.13 3.14; do
+    if command -v python$VER >/dev/null 2>&1; then
+        AVAILABLE_PYTHONS+=("$VER")
+    fi
+done
+
+if [ ${#AVAILABLE_PYTHONS[@]} -eq 0 ]; then
+    echo "❌ No supported Python versions (3.12, 3.13, 3.14) are installed."
+    echo "   Install one with: sudo apt install python3.12"
     exit 1
 fi
 
-echo "✓ Python 3 found: $(python3 --version)"
+echo "Available Python versions:"
+i=1
+for VER in "${AVAILABLE_PYTHONS[@]}"; do
+    echo "  $i) Python $VER"
+    ((i++))
+done
+
+read -p "Select Python version to use: " CHOICE
+PYTHON_VERSION=${AVAILABLE_PYTHONS[$((CHOICE-1))]}
+
+if [ -z "$PYTHON_VERSION" ]; then
+    echo "❌ Invalid selection"
+    exit 1
+fi
+
+PYTHON_BIN="python$PYTHON_VERSION"
+VENV_PKG="python$PYTHON_VERSION-venv"
+
+echo "✓ Selected Python version: $PYTHON_BIN"
 echo ""
 
-# Create service user
+# --- Ensure pythonX.Y-venv is installed --------------------------------------
+echo "Checking for $VENV_PKG..."
+if ! dpkg -s "$VENV_PKG" >/dev/null 2>&1; then
+    echo "Installing $VENV_PKG..."
+    apt update
+    apt install -y "$VENV_PKG"
+    echo "✓ $VENV_PKG installed"
+else
+    echo "✓ $VENV_PKG already installed"
+fi
+echo ""
+
+# --- Create service user -----------------------------------------------------
 echo "Creating service user..."
 if id "windrose-monitor" &>/dev/null; then
     echo "  ℹ User windrose-monitor already exists"
@@ -33,72 +73,70 @@ else
     echo "  ✓ Created windrose-monitor user"
 fi
 
-# Create directories
+# --- Create directories -------------------------------------------------------
 echo "Creating required directories..."
 mkdir -p /var/lib/windrose-monitor
 mkdir -p /etc/windrose-monitor
-mkdir -p /var/log
+mkdir -p /var/log/windrose-monitor
+
 chown windrose-monitor:windrose-monitor /var/lib/windrose-monitor
 chmod 750 /var/lib/windrose-monitor
-echo "  ✓ Directories created and configured"
 
-#Create venv and install dependencies
-echo "Creating Python virtual environment..."
-python3 -m venv /var/lib/windrose-monitor/venv
+echo "  ✓ Directories created and configured"
+echo ""
+
+# --- Create venv + install dependencies --------------------------------------
+echo "Creating Python virtual environment using $PYTHON_BIN..."
+$PYTHON_BIN -m venv /var/lib/windrose-monitor/venv
+
+echo "Installing Python dependencies..."
 source /var/lib/windrose-monitor/venv/bin/activate
 pip install --upgrade pip
-echo ""
-echo "Installing Python dependencies..."w
 pip install -r requirements.txt
 deactivate
-echo "  ✓ Virtual environment created and dependencies installed"
 
-# Update ownership of venv to service user
+# Fix ownership so the service user can run the venv
 chown -R windrose-monitor:windrose-monitor /var/lib/windrose-monitor/venv
 
-# Copy configuration template
+echo "  ✓ Virtual environment created and dependencies installed"
 echo ""
+
+# --- Configuration files ------------------------------------------------------
 echo "Setting up configuration..."
 
-# Setup .env file (recommended)
 if [ -f /etc/windrose-monitor/.env ]; then
-    echo "  ℹ .env file already exists at /etc/windrose-monitor/.env"
+    echo "  ℹ .env file already exists"
 else
     cp .env.example /etc/windrose-monitor/.env
     chmod 600 /etc/windrose-monitor/.env
     chown windrose-monitor:windrose-monitor /etc/windrose-monitor/.env
-    echo "  ✓ .env file created from .env.example"
-    echo "  ⚠  You MUST edit /etc/windrose-monitor/.env with your settings:"
-    echo "     - PTERODACTYL_API_URL"
-    echo "     - PTERODACTYL_API_TOKEN"
-    echo "     - PTERODACTYL_SERVER_ID"
-    echo "     - DISCORD_WEBHOOK_URL"
+    echo "  ✓ .env file created"
 fi
 
-# Also support config.json for backwards compatibility
 if [ -f /etc/windrose-monitor/config.json ]; then
-    echo "  ℹ config.json already exists (will be used as fallback)"
+    echo "  ℹ config.json already exists"
 else
     cp config.example.json /etc/windrose-monitor/config.json
     chmod 600 /etc/windrose-monitor/config.json
     chown windrose-monitor:windrose-monitor /etc/windrose-monitor/config.json
-    echo "  ℹ config.json created (optional, .env is preferred)"
+    echo "  ✓ config.json created (optional)"
 fi
-
-# Create symlink
 echo ""
+
+# --- Install executable -------------------------------------------------------
 echo "Installing executable..."
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ln -sf "$SCRIPT_DIR/windrose_monitor.py" /usr/local/bin/windrose-monitor
 chmod +x /usr/local/bin/windrose-monitor
 echo "  ✓ Executable installed at /usr/local/bin/windrose-monitor"
-
-# Setup sudoers for CPU frequency scaling
 echo ""
+
+# --- Sudoers for CPU scaling --------------------------------------------------
 echo "Configuring sudo permissions for CPU frequency scaling..."
 SUDOERS_FILE="/etc/sudoers.d/windrose-monitor"
+
 if [ -f "$SUDOERS_FILE" ]; then
-    echo "  ℹ Sudoers file already configured"
+    echo "  ℹ Sudoers file already exists"
 else
     cat > "$SUDOERS_FILE" << 'EOF'
 # Allow windrose-monitor to change CPU frequency without password
@@ -107,41 +145,36 @@ EOF
     chmod 440 "$SUDOERS_FILE"
     echo "  ✓ Sudoers file created"
 fi
-
-# Install systemd service
 echo ""
+
+# --- Install systemd service --------------------------------------------------
 echo "Installing systemd service..."
 cp windrose-monitor.service /etc/systemd/system/
+
+# Patch ExecStart to use the chosen Python version
+sed -i "s|ExecStart=.*|ExecStart=/var/lib/windrose-monitor/venv/bin/python /usr/local/bin/windrose-monitor|" /etc/systemd/system/windrose-monitor.service
+
 systemctl daemon-reload
 systemctl enable windrose-monitor
 echo "  ✓ Systemd service installed and enabled"
-
 echo ""
+
+# --- Final message ------------------------------------------------------------
 echo "╔════════════════════════════════════════════════════════════╗"
 echo "║              Installation Complete! 🎉                     ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Next steps:"
 echo ""
-echo "1. ⚠️  IMPORTANT: Edit your configuration file:"
-echo "   sudo nano /etc/windrose-monitor/config.json"
+echo "1. Edit your configuration:"
+echo "   sudo nano /etc/windrose-monitor/.env"
 echo ""
-echo "   You need to add:"
-echo "   - Your Pterodactyl API URL and token"
-echo "   - Your Discord webhook URL"
-echo "   - Your server UUID"
-echo ""
-echo "2. Verify the configuration is valid:"
-echo "   python3 -m json.tool /etc/windrose-monitor/config.json"
-echo ""
-echo "3. Start the service:"
+echo "2. Start the service:"
 echo "   sudo systemctl start windrose-monitor"
 echo ""
-echo "4. Check if it's running:"
+echo "3. Check status:"
 echo "   sudo systemctl status windrose-monitor"
 echo ""
-echo "5. View logs in real-time:"
+echo "4. View logs:"
 echo "   sudo journalctl -u windrose-monitor -f"
-echo ""
-echo "For detailed setup instructions, see SETUP.md"
 echo ""
