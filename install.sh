@@ -38,9 +38,7 @@ for VER in "${AVAILABLE_PYTHONS[@]}"; do
     ((i++))
 done
 
-read -p "Select Python version to use [1]: " CHOICE
-CHOICE=${CHOICE:-1}
-
+read -p "Select Python version to use: " CHOICE
 PYTHON_VERSION=${AVAILABLE_PYTHONS[$((CHOICE-1))]}
 
 if [ -z "$PYTHON_VERSION" ]; then
@@ -80,15 +78,32 @@ echo "Creating required directories..."
 mkdir -p /var/lib/windrose-monitor
 mkdir -p /etc/windrose-monitor
 mkdir -p /var/log/windrose-monitor
-mkdir -p /opt/windrose-monitor
 
 chown windrose-monitor:windrose-monitor /var/lib/windrose-monitor
 chmod 750 /var/lib/windrose-monitor
 
-chown windrose-monitor:windrose-monitor /var/log/windrose-monitor
-chmod 750 /var/log/windrose-monitor
-
 echo "  ✓ Directories created and configured"
+echo ""
+
+# --- Move executable into service directory ----------------------------------
+echo "Installing executable..."
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+if [ ! -f "$SCRIPT_DIR/windrose_monitor.py" ]; then
+    echo "❌ Cannot find windrose_monitor.py in the installer directory ($SCRIPT_DIR)."
+    exit 1
+fi
+
+cp "$SCRIPT_DIR/windrose_monitor.py" /var/lib/windrose-monitor/windrose-monitor.py
+chmod +x /var/lib/windrose-monitor/windrose-monitor.py
+chown windrose-monitor:windrose-monitor /var/lib/windrose-monitor/windrose-monitor.py
+
+# Remove old symlink if it exists
+if [ -L /usr/local/bin/windrose-monitor ]; then
+    rm /usr/local/bin/windrose-monitor
+fi
+
+echo "  ✓ Executable installed at /var/lib/windrose-monitor/windrose-monitor.py"
 echo ""
 
 # --- Create venv + install dependencies --------------------------------------
@@ -98,7 +113,11 @@ $PYTHON_BIN -m venv /var/lib/windrose-monitor/venv
 echo "Installing Python dependencies..."
 source /var/lib/windrose-monitor/venv/bin/activate
 pip install --upgrade pip
-pip install -r requirements.txt
+if [ -f "$SCRIPT_DIR/requirements.txt" ]; then
+    pip install -r "$SCRIPT_DIR/requirements.txt"
+else
+    echo "  ℹ No requirements.txt found in $SCRIPT_DIR; skipping pip install -r"
+fi
 deactivate
 
 # Fix ownership so the service user can run the venv
@@ -107,50 +126,33 @@ chown -R windrose-monitor:windrose-monitor /var/lib/windrose-monitor/venv
 echo "  ✓ Virtual environment created and dependencies installed"
 echo ""
 
-# --- Copy application script ---------------------------------------------------
-echo "Installing application script..."
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-
-# Copy script to /opt/windrose-monitor/
-cp "$SCRIPT_DIR/windrose_monitor.py" /opt/windrose-monitor/windrose_monitor.py
-chmod +x /opt/windrose-monitor/windrose_monitor.py
-chown windrose-monitor:windrose-monitor /opt/windrose-monitor/windrose_monitor.py
-
-echo "  ✓ Application script installed at /opt/windrose-monitor/windrose_monitor.py"
-echo ""
-
-# --- Cleanup old symlinks ----------------------------------------------------- [INSERT HERE]
-echo "Cleaning up old installations..."
-if [ -L /usr/local/bin/windrose-monitor ]; then
-    rm /usr/local/bin/windrose-monitor
-    echo "  ✓ Removed old symlink"
-fi
-
-# Ensure /opt/windrose-monitor is accessible
-chown -R windrose-monitor:windrose-monitor /opt/windrose-monitor
-chmod 755 /opt/windrose-monitor
-echo "  ✓ Directory permissions set"
-echo ""
-
 # --- Configuration files ------------------------------------------------------
 echo "Setting up configuration..."
 
 if [ -f /etc/windrose-monitor/.env ]; then
     echo "  ℹ .env file already exists"
 else
-    cp "$SCRIPT_DIR/.env.example" /etc/windrose-monitor/.env
-    chmod 600 /etc/windrose-monitor/.env
-    chown windrose-monitor:windrose-monitor /etc/windrose-monitor/.env
-    echo "  ✓ .env file created"
+    if [ -f "$SCRIPT_DIR/.env.example" ]; then
+        cp "$SCRIPT_DIR/.env.example" /etc/windrose-monitor/.env
+        chmod 600 /etc/windrose-monitor/.env
+        chown windrose-monitor:windrose-monitor /etc/windrose-monitor/.env
+        echo "  ✓ .env file created"
+    else
+        echo "  ℹ No .env.example found; create /etc/windrose-monitor/.env manually"
+    fi
 fi
 
 if [ -f /etc/windrose-monitor/config.json ]; then
     echo "  ℹ config.json already exists"
 else
-    cp "$SCRIPT_DIR/config.example.json" /etc/windrose-monitor/config.json
-    chmod 600 /etc/windrose-monitor/config.json
-    chown windrose-monitor:windrose-monitor /etc/windrose-monitor/config.json
-    echo "  ✓ config.json created (optional fallback)"
+    if [ -f "$SCRIPT_DIR/config.example.json" ]; then
+        cp "$SCRIPT_DIR/config.example.json" /etc/windrose-monitor/config.json
+        chmod 600 /etc/windrose-monitor/config.json
+        chown windrose-monitor:windrose-monitor /etc/windrose-monitor/config.json
+        echo "  ✓ config.json created (optional)"
+    else
+        echo "  ℹ No config.example.json found; create /etc/windrose-monitor/config.json manually"
+    fi
 fi
 echo ""
 
@@ -161,10 +163,10 @@ SUDOERS_FILE="/etc/sudoers.d/windrose-monitor"
 if [ -f "$SUDOERS_FILE" ]; then
     echo "  ℹ Sudoers file already exists"
 else
-    cat > "$SUDOERS_FILE" << 'EOF'
+    cat > "$SUDOERS_FILE" << 'SUDO_EOF'
 # Allow windrose-monitor to change CPU frequency without password
 windrose-monitor ALL=(ALL) NOPASSWD:/usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference
-EOF
+SUDO_EOF
     chmod 440 "$SUDOERS_FILE"
     echo "  ✓ Sudoers file created"
 fi
@@ -172,41 +174,21 @@ echo ""
 
 # --- Install systemd service --------------------------------------------------
 echo "Installing systemd service..."
-cp "$SCRIPT_DIR/windrose-monitor.service" /etc/systemd/system/windrose-monitor.service
+if [ -f "$SCRIPT_DIR/windrose-monitor.service" ]; then
+    cp "$SCRIPT_DIR/windrose-monitor.service" /etc/systemd/system/
+else
+    echo "❌ windrose-monitor.service not found in $SCRIPT_DIR; please add the service file to the repo."
+    exit 1
+fi
 
-# Update ExecStart to use the selected Python version's venv
-sed -i "s|ExecStart=.*|ExecStart=/var/lib/windrose-monitor/venv/bin/python /opt/windrose-monitor/windrose_monitor.py|" /etc/systemd/system/windrose-monitor.service
+# Patch ExecStart to use the correct venv + relocated script
+sed -i "s|ExecStart=.*|ExecStart=/var/lib/windrose-monitor/venv/bin/python /var/lib/windrose-monitor/windrose-monitor.py|" \
+    /etc/systemd/system/windrose-monitor.service
 
 systemctl daemon-reload
 systemctl enable windrose-monitor
 
 echo "  ✓ Systemd service installed and enabled"
-echo ""
-
-# --- Verify installation -------------------------------------------------------
-echo "Verifying installation..."
-
-if [ -x /opt/windrose-monitor/windrose_monitor.py ]; then
-    echo "  ✓ Script is executable"
-else
-    echo "  ❌ Script is not executable"
-    exit 1
-fi
-
-if [ -x /var/lib/windrose-monitor/venv/bin/python ]; then
-    echo "  ✓ Virtual environment Python is executable"
-else
-    echo "  ❌ Virtual environment Python is not executable"
-    exit 1
-fi
-
-if [ -f /etc/windrose-monitor/.env ]; then
-    echo "  ✓ Configuration file exists"
-else
-    echo "  ❌ Configuration file missing"
-    exit 1
-fi
-
 echo ""
 
 # --- Final message ------------------------------------------------------------
@@ -219,23 +201,12 @@ echo ""
 echo "1. Edit your configuration:"
 echo "   sudo nano /etc/windrose-monitor/.env"
 echo ""
-echo "   Required variables:"
-echo "   - PTERODACTYL_API_URL"
-echo "   - PTERODACTYL_API_TOKEN"
-echo "   - PTERODACTYL_SERVER_ID"
-echo "   - DISCORD_WEBHOOK_URL"
-echo ""
 echo "2. Start the service:"
 echo "   sudo systemctl start windrose-monitor"
 echo ""
 echo "3. Check status:"
 echo "   sudo systemctl status windrose-monitor"
 echo ""
-echo "4. View logs (with timestamps):"
+echo "4. View logs:"
 echo "   sudo tail -f /var/log/windrose-monitor/windrose-monitor.log"
-echo ""
-echo "5. Or use journalctl:"
-echo "   sudo journalctl -u windrose-monitor -f"
-echo ""
-echo "For troubleshooting, see QUICKREF.md"
 echo ""
