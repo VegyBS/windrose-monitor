@@ -53,6 +53,9 @@ pip install -r requirements.txt
 deactivate
 echo "  ✓ Virtual environment created and dependencies installed"
 
+# Update ownership of venv to service user
+chown -R windrose-monitor:windrose-monitor /var/lib/windrose-monitor/venv
+
 # Copy configuration template
 echo ""
 echo "Setting up configuration..."

@@ -12,7 +12,7 @@ Group=windrose-monitor
 # Load environment variables from .env file
 EnvironmentFile=/etc/windrose-monitor/.env
 
-ExecStart=/usr/local/bin/windrose-monitor
+ExecStart=/var/lib/windrose-monitor/venv/bin/python /usr/local/bin/windrose-monitor
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
