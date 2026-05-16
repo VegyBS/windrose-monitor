@@ -9,6 +9,9 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
 env:
   # Set CI mode for test scripts to use mocked APIs
   CI: 'true'
