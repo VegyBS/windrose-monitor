@@ -15,6 +15,35 @@ from pathlib import Path
 # Detect if running in CI environment
 CI_MODE = os.getenv('CI', 'false').lower() == 'true'
 
+def load_config_from_env() -> dict:
+    """Load configuration from environment variables
+    
+    Used in CI mode when config files don't exist
+    """
+    return {
+        'pterodactyl': {
+            'api_url': os.getenv('PTERODACTYL_API_URL', ''),
+            'api_token': os.getenv('PTERODACTYL_API_TOKEN', ''),
+            'server_id': os.getenv('PTERODACTYL_SERVER_ID', '')
+        },
+        'discord': {
+            'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', '')
+        },
+        'monitoring': {
+            'check_interval_seconds': int(os.getenv('CHECK_INTERVAL_SECONDS', '20')),
+            'log_patterns': {
+                'reserved_accounts_header': 'Reserved Accounts',
+                'disconnected_accounts_header': 'Disconnected Accounts'
+            }
+        },
+        'cpu_profile': {
+            'enabled': os.getenv('CPU_PROFILE_ENABLED', 'true').lower() == 'true',
+            'performance_profile': os.getenv('CPU_PROFILE_PERFORMANCE', 'performance'),
+            'balanced_profile': os.getenv('CPU_PROFILE_BALANCED', 'balance_power'),
+            'cpu_freq_path': os.getenv('CPU_FREQ_PATH', '/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference')
+        }
+    }
+
 def test_config(config_path: str):
     """Test if configuration file is valid"""
     print("Testing configuration file...")
@@ -212,24 +241,34 @@ def main():
         print("  Mode: Local (real API tests)")
     print("")
     
-    # Try different config paths
-    config_paths = [
-        '/etc/windrose-monitor/config.json',
-        './config.json',
-        Path(__file__).parent / 'config.json'
-    ]
-    
-    config = None
-    for path in config_paths:
-        if Path(path).exists():
-            config = test_config(str(path))
-            if config:
-                break
-    
-    if not config:
-        print("\n✗ Could not find configuration file")
-        print("  Try running from the installation directory")
-        sys.exit(1)
+    # In CI mode, load config from environment variables
+    if CI_MODE:
+        config = load_config_from_env()
+        if config['pterodactyl']['api_token']:
+            print("✓ Using configuration from environment variables (CI mode)")
+            print("")
+        else:
+            print("✗ No configuration found in environment variables")
+            sys.exit(1)
+    else:
+        # Try different config paths
+        config_paths = [
+            '/etc/windrose-monitor/config.json',
+            './config.json',
+            Path(__file__).parent / 'config.json'
+        ]
+        
+        config = None
+        for path in config_paths:
+            if Path(path).exists():
+                config = test_config(str(path))
+                if config:
+                    break
+        
+        if not config:
+            print("\n✗ Could not find configuration file")
+            print("  Try running from the installation directory")
+            sys.exit(1)
     
     # Run tests
     tests = [
