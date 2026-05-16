@@ -1,0 +1,26 @@
+[Unit]
+Description=Windrose Server Monitor
+Documentation=https://github.com/yourusername/windrose-monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=windrose-monitor
+Group=windrose-monitor
+ExecStart=/usr/local/bin/windrose-monitor
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=windrose-monitor
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Allow sudo for CPU frequency scaling without password
+# This service will need passwordless sudo for tee command
+
+[Install]
+WantedBy=multi-user.target

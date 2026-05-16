@@ -1,0 +1,42 @@
+name: Feature Request
+description: Suggest a new feature
+title: "[FEATURE] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your interest in improving Windrose Monitor!
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Clear description of the feature you want
+      placeholder: "I would like..."
+    validations:
+      required: true
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use Case
+      description: How would this feature be used?
+      placeholder: "This would help with..."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions?
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      description: What does this affect?
+      options:
+        - label: Player monitoring
+        - label: CPU profile management
+        - label: Discord notifications
+        - label: Configuration
+        - label: Documentation
+        - label: Other

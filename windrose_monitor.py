@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""
+Windrose Server Monitor
+Monitors player count, manages CPU profiles, and sends Discord notifications
+"""
+
+import json
+import logging
+import time
+import requests
+import os
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Set, Optional
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('/var/log/windrose-monitor.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+class WindroseMonitor:
+    def __init__(self, config_path: str = '/etc/windrose-monitor/config.json'):
+        """Initialize the monitor with configuration"""
+        self.config = self._load_config(config_path)
+        self.state = self._load_state()
+        self.api_session = requests.Session()
+        self.api_session.headers.update({
+            'Authorization': f"Bearer {self.config['pterodactyl']['api_token']}"
+        })
+        
+    def _load_config(self, config_path: str) -> Dict:
+        """Load configuration from JSON file"""
+        try:
+            with open(config_path, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            logger.error(f"Config file not found: {config_path}")
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in config file: {e}")
+            sys.exit(1)
+    
+    def _load_state(self) -> Dict:
+        """Load state from JSON file"""
+        state_file = Path(self.config.get('state_file', '/var/lib/windrose-monitor/state.json'))
+        if state_file.exists():
+            try:
+                with open(state_file, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                logger.warning(f"Could not load state file: {e}")
+        
+        return {
+            'players': [],
+            'player_count': 0,
+            'last_update': None,
+            'cpu_profile': 'balanced'
+        }
+    
+    def _save_state(self):
+        """Save state to JSON file"""
+        state_file = Path(self.config.get('state_file', '/var/lib/windrose-monitor/state.json'))
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(state_file, 'w') as f:
+            json.dump(self.state, f, indent=2)
+    
+    def get_server_logs(self) -> Optional[str]:
+        """Fetch server logs from Pterodactyl API"""
+        try:
+            url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/logs"
+            response = self.api_session.get(url, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            return data.get('attributes', {}).get('content', '')
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to fetch logs from Pterodactyl API: {e}")
+            return None
+    
+    def parse_player_list(self, logs: str) -> Set[str]:
+        """Parse player list from logs
+        
+        Looks for Reserved Accounts section which indicates current players
+        """
+        players = set()
+        lines = logs.split('\n')
+        
+        in_reserved = False
+        for i, line in enumerate(lines):
+            # Look for "Reserved Accounts" header
+            if self.config['monitoring']['log_patterns']['reserved_accounts_header'] in line:
+                in_reserved = True
+                # Check next lines for player names (non-empty lines before next header)
+                j = i + 1
+                while j < len(lines):
+                    next_line = lines[j].strip()
+                    
+                    # Stop if we hit another header
+                    if any(header in lines[j] for header in [
+                        'Connected Accounts',
+                        'Disconnected Accounts'
+                    ]):
+                        break
+                    
+                    # Add non-empty lines as player names
+                    if next_line and not next_line.startswith('['):
+                        players.add(next_line)
+                    
+                    j += 1
+                break
+        
+        return players
+    
+    def set_cpu_profile(self, profile: str) -> bool:
+        """Set CPU performance profile
+        
+        Args:
+            profile: 'performance' or 'balance_power'
+        
+        Returns:
+            True if successful
+        """
+        if not self.config['cpu_profile']['enabled']:
+            return True
+        
+        try:
+            # Get all CPU cores
+            cpu_path_template = self.config['cpu_profile']['cpu_freq_path'].replace('cpu0', 'cpu{}')
+            
+            # Find all available CPUs
+            sys_cpu_path = '/sys/devices/system/cpu'
+            cpu_count = 0
+            for cpu_dir in Path(sys_cpu_path).glob('cpu[0-9]*'):
+                cpu_num = cpu_dir.name.replace('cpu', '')
+                try:
+                    cpu_num = int(cpu_num)
+                except ValueError:
+                    continue
+                cpu_count += 1
+            
+            # Write profile to each CPU
+            success = True
+            for i in range(cpu_count):
+                cpu_freq_path = cpu_path_template.format(i)
+                try:
+                    # Use echo with sudo to write to the file
+                    cmd = f"echo '{profile}' | sudo tee {cpu_freq_path} > /dev/null"
+                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                    
+                    if result.returncode != 0:
+                        logger.warning(f"Failed to set CPU {i} to {profile}: {result.stderr}")
+                        success = False
+                except Exception as e:
+                    logger.warning(f"Error setting CPU {i} profile: {e}")
+                    success = False
+            
+            if success:
+                logger.info(f"CPU profile set to: {profile}")
+                self.state['cpu_profile'] = profile
+            return success
+        except Exception as e:
+            logger.error(f"Error changing CPU profile: {e}")
+            return False
+    
+    def send_discord_message(self, message: str) -> bool:
+        """Send message to Discord webhook
+        
+        Args:
+            message: Message to send
+        
+        Returns:
+            True if successful
+        """
+        try:
+            webhook_url = self.config['discord']['webhook_url']
+            payload = {
+                'content': message,
+                'username': 'Windrose Server Monitor',
+                'avatar_url': 'https://via.placeholder.com/32'
+            }
+            
+            response = requests.post(webhook_url, json=payload, timeout=10)
+            response.raise_for_status()
+            return True
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to send Discord message: {e}")
+            return False
+    
+    def check_and_update(self):
+        """Check for player changes and update state"""
+        logger.info("Checking server status...")
+        
+        # Fetch logs
+        logs = self.get_server_logs()
+        if not logs:
+            logger.warning("Could not fetch server logs")
+            return
+        
+        # Parse current players
+        current_players = self.parse_player_list(logs)
+        previous_players = set(self.state.get('players', []))
+        
+        # Check for new players
+        new_players = current_players - previous_players
+        if new_players:
+            for player in new_players:
+                msg = f"🎮 **Player Joined**: {player}"
+                logger.info(msg)
+                self.send_discord_message(msg)
+        
+        # Check for disconnected players
+        left_players = previous_players - current_players
+        if left_players:
+            for player in left_players:
+                msg = f"👋 **Player Left**: {player}"
+                logger.info(msg)
+                self.send_discord_message(msg)
+        
+        # Update player count
+        prev_count = self.state.get('player_count', 0)
+        current_count = len(current_players)
+        
+        if current_count != prev_count:
+            status_msg = f"📊 **Player Count**: {current_count} (was {prev_count})"
+            logger.info(status_msg)
+            self.send_discord_message(status_msg)
+        
+        # Update state
+        self.state['players'] = list(current_players)
+        self.state['player_count'] = current_count
+        self.state['last_update'] = datetime.now().isoformat()
+        
+        # Manage CPU profile
+        if current_count > 0 and self.state.get('cpu_profile') != 'performance':
+            logger.info("Players detected, switching to performance CPU profile")
+            self.set_cpu_profile(self.config['cpu_profile']['performance_profile'])
+        elif current_count == 0 and self.state.get('cpu_profile') != 'balanced':
+            logger.info("No players, switching to balanced CPU profile")
+            self.set_cpu_profile(self.config['cpu_profile']['balanced_profile'])
+        
+        # Save state
+        self._save_state()
+    
+    def run(self):
+        """Main monitoring loop"""
+        logger.info("Starting Windrose Server Monitor")
+        
+        try:
+            while True:
+                try:
+                    self.check_and_update()
+                except Exception as e:
+                    logger.error(f"Error during check: {e}", exc_info=True)
+                
+                time.sleep(self.config['monitoring']['check_interval_seconds'])
+        except KeyboardInterrupt:
+            logger.info("Monitoring stopped by user")
+        except Exception as e:
+            logger.error(f"Fatal error: {e}", exc_info=True)
+            sys.exit(1)
+
+def main():
+    monitor = WindroseMonitor()
+    monitor.run()
+
+if __name__ == '__main__':
+    main()
