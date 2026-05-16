@@ -1,6 +1,6 @@
 [Unit]
 Description=Windrose Server Monitor
-Documentation=https://github.com/yourusername/windrose-monitor
+Documentation=https://github.com/VegyBS/windrose-monitor
 After=network-online.target
 Wants=network-online.target
 
