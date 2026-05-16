@@ -6,6 +6,7 @@ Monitors player count, manages CPU profiles, and sends Discord notifications
 
 import json
 import logging
+import logging.handlers
 import time
 import requests
 import os
@@ -19,16 +20,32 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('/var/log/windrose-monitor.log'),
-        logging.StreamHandler()
-    ]
+# Create log directory if it doesn't exist
+log_dir = Path('/var/log/windrose-monitor')
+log_dir.mkdir(parents=True, exist_ok=True)
+
+# Configure logging with timestamps
+log_format = '%(asctime)s - %(levelname)s - %(message)s'
+log_file = '/var/log/windrose-monitor/windrose-monitor.log'
+
+# Set up file handler with rotation
+file_handler = logging.handlers.RotatingFileHandler(
+    log_file,
+    maxBytes=10485760,  # 10MB
+    backupCount=5
 )
+file_handler.setFormatter(logging.Formatter(log_format, datefmt='%Y-%m-%d %H:%M:%S'))
+
+# Set up console handler
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter(log_format, datefmt='%Y-%m-%d %H:%M:%S'))
+
+# Configure logging
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(file_handler)
+logger.addHandler(console_handler)
+
 
 class WindroseMonitor:
     def __init__(self, config_path: str = '/etc/windrose-monitor/config.json'):
@@ -70,7 +87,7 @@ class WindroseMonitor:
                 'cpu_freq_path': os.getenv('CPU_FREQ_PATH', '/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference')
             },
             'state_file': os.getenv('STATE_FILE', '/var/lib/windrose-monitor/state.json'),
-            'log_file': os.getenv('LOG_FILE', '/var/log/windrose-monitor.log')
+            'log_file': os.getenv('LOG_FILE', '/var/log/windrose-monitor/windrose-monitor.log')
         }
         
         # If env vars not fully populated, try loading from config file as fallback
@@ -325,9 +342,11 @@ class WindroseMonitor:
             logger.error(f"Fatal error: {e}", exc_info=True)
             sys.exit(1)
 
+
 def main():
     monitor = WindroseMonitor()
     monitor.run()
+
 
 if __name__ == '__main__':
     main()
