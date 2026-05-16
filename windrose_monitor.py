@@ -220,8 +220,9 @@ class WindroseMonitor:
         while not self._ws_stop.is_set():
             token_data = self._get_websocket_token()
             if not token_data:
+                # If token endpoint is rate-limiting, back off longer
                 time.sleep(backoff)
-                backoff = min(backoff * 2, 60)
+                backoff = min(backoff * 2, 300)
                 continue
 
             token = token_data.get('token')
@@ -287,11 +288,16 @@ class WindroseMonitor:
                 except Exception:
                     pass
             except Exception as e:
-                logger.warning(f"WebSocket connection failed: {e}")
-
-            # Wait before reconnecting
-            time.sleep(backoff)
-            backoff = min(backoff * 2, 60)
+                # If handshake returned 403, the panel denied the websocket connection.
+                msg = str(e)
+                logger.warning(f"WebSocket connection failed: {msg}")
+                # If forbidden, likely permissions/token issue — back off longer to avoid repeated failures
+                if '403' in msg or 'Forbidden' in msg:
+                    logger.warning('WebSocket handshake forbidden: token may lack websocket.connect permission or Origin/subprotocol mismatch. Backing off 5 minutes.')
+                    time.sleep(300)
+                else:
+                    time.sleep(backoff)
+                backoff = min(backoff * 2, 300)
     
     def parse_player_list(self, logs: str) -> Set[str]:
         """Parse player list from logs
