@@ -107,21 +107,37 @@ echo "  ✓ Executable installed at /var/lib/windrose-monitor/windrose-monitor.p
 echo ""
 
 # --- Create venv + install dependencies --------------------------------------
+VENV_DIR=/var/lib/windrose-monitor/venv
 echo "Creating Python virtual environment using $PYTHON_BIN..."
-$PYTHON_BIN -m venv /var/lib/windrose-monitor/venv
+$PYTHON_BIN -m venv "$VENV_DIR"
 
-echo "Installing Python dependencies..."
-source /var/lib/windrose-monitor/venv/bin/activate
-pip install --upgrade pip
-if [ -f "$SCRIPT_DIR/requirements.txt" ]; then
-    pip install -r "$SCRIPT_DIR/requirements.txt"
+echo "Installing Python dependencies into venv..."
+# Use the venv python -m pip to ensure we don't write to system site-packages
+if [ -x "$VENV_DIR/bin/python" ]; then
+    if "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel; then
+        echo "  ✓ venv pip upgraded"
+    else
+        echo "  ℹ pip upgrade failed, attempting ensurepip..."
+        if "$VENV_DIR/bin/python" -m ensurepip --upgrade; then
+            "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel
+        else
+            echo "❌ Could not bootstrap pip in venv"
+            exit 1
+        fi
+    fi
+
+    if [ -f "$SCRIPT_DIR/requirements.txt" ]; then
+        "$VENV_DIR/bin/python" -m pip install -r "$SCRIPT_DIR/requirements.txt"
+    else
+        echo "  ℹ No requirements.txt found in $SCRIPT_DIR; skipping pip install -r"
+    fi
 else
-    echo "  ℹ No requirements.txt found in $SCRIPT_DIR; skipping pip install -r"
+    echo "❌ Failed to create virtual environment at $VENV_DIR"
+    exit 1
 fi
-deactivate
 
 # Fix ownership so the service user can run the venv
-chown -R windrose-monitor:windrose-monitor /var/lib/windrose-monitor/venv
+chown -R windrose-monitor:windrose-monitor "$VENV_DIR"
 
 echo "  ✓ Virtual environment created and dependencies installed"
 echo ""
