@@ -20,6 +20,7 @@ try:
 except Exception:
     websocket = None
 from datetime import datetime
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Dict, List, Set, Optional
 from dotenv import load_dotenv
@@ -71,8 +72,11 @@ class WindroseMonitor:
 
         # Start websocket listener thread if websocket-client is available
         if websocket is not None:
+            logger.info("websocket-client available, starting WebSocket listener thread")
             self._ws_thread = threading.Thread(target=self._ws_listener, daemon=True)
             self._ws_thread.start()
+        else:
+            logger.warning("websocket-client library not available; WebSocket log streaming disabled")
         
     def _load_config(self, config_path: str) -> Dict:
         """Load configuration from environment variables or JSON file
@@ -161,10 +165,20 @@ class WindroseMonitor:
 
         Prefer the live WebSocket buffer; fall back to the HTTP logs endpoint if empty.
         """
-        # Prefer websocket buffer if populated
-        with self._ws_lock:
-            if len(self._ws_buffer) > 0:
-                return "\n".join(list(self._ws_buffer))
+        # If websocket is enabled, prefer websocket buffer and do not call legacy /logs endpoint.
+        if websocket is not None:
+            with self._ws_lock:
+                if len(self._ws_buffer) > 0:
+                    return "\n".join(list(self._ws_buffer))
+
+            # If buffer empty, attempt to validate websocket token so we can show a helpful message
+            token_data = self._get_websocket_token()
+            if not token_data:
+                logger.warning("WebSocket token unavailable — ensure PTERODACTYL_API_TOKEN is a Client API token with websocket.connect permission")
+                return None
+
+            logger.info("WebSocket token obtained; waiting for live console output to populate buffer")
+            return None
 
         # Fallback: HTTP logs endpoint (legacy)
         try:
@@ -188,6 +202,13 @@ class WindroseMonitor:
             })
             resp.raise_for_status()
             data = resp.json().get('data')
+            if data and isinstance(data, dict):
+                socket = data.get('socket')
+                try:
+                    host = urlparse(socket).netloc if socket else 'unknown'
+                except Exception:
+                    host = 'unknown'
+                logger.info(f"Obtained websocket token, socket host: {host}")
             return data
         except requests.exceptions.RequestException as e:
             logger.warning(f"Could not obtain websocket token: {e}")
@@ -214,10 +235,16 @@ class WindroseMonitor:
 
             try:
                 # Use websocket-client to connect
+                try:
+                    host = urlparse(socket_url).netloc
+                except Exception:
+                    host = socket_url
+                logger.info(f"Connecting to WebSocket at {host}")
                 ws = websocket.create_connection(socket_url, timeout=15, header=headers, sslopt={"cert_reqs": ssl.CERT_REQUIRED})
                 # Authenticate
                 auth_msg = json.dumps({"event": "auth", "args": [token]})
                 ws.send(auth_msg)
+                logger.info("WebSocket connection established and auth message sent")
 
                 backoff = 1
                 while not self._ws_stop.is_set():
