@@ -22,6 +22,38 @@ The Windrose Monitor uses **unit tests with mocked APIs** to ensure code quality
 pip install -r requirements.txt
 ```
 
+### Configuration Validation
+
+The `test_config.py` script has two modes:
+
+#### Local Mode (Default)
+Tests real API connectivity. Use this before deploying:
+
+```bash
+# Run in local mode - tests real APIs
+python test_config.py
+```
+
+This validates:
+- ✓ Pterodactyl API connectivity
+- ✓ Discord webhook works
+- ✓ CPU frequency scaling available
+- ✓ File permissions
+
+#### CI Mode (GitHub Actions)
+Validates configuration structure without real API calls:
+
+```bash
+# Run in CI mode - uses mocked APIs
+CI=true python test_config.py
+```
+
+This validates:
+- ✓ Configuration format/structure
+- ✓ Required fields present
+- ✓ Token format valid
+- ✓ No external API calls (faster, safer in CI)
+
 ### Run All Tests
 
 ```bash
@@ -107,9 +139,36 @@ The `.github/workflows/tests.yml` file automatically runs tests on:
 ### What the workflow does:
 
 1. **Tests Python 3.7-3.11** - Ensures compatibility with multiple Python versions
-2. **Validates JSON** - Checks config.example.json is valid
+2. **Validates JSON/Config** - Checks config.example.json and .env.example are valid
 3. **Syntax checks** - Verifies all Python files compile
 4. **Linting** - Checks code style with flake8
+5. **Runs test_config.py in CI mode** - Validates configuration without external API calls
+
+### CI Mode Configuration
+
+The workflow sets environment variables to enable **CI mode**:
+
+```yaml
+env:
+  CI: 'true'  # Enables mocked API mode in test_config.py
+  PTERODACTYL_API_URL: 'https://example-pterodactyl.com'
+  PTERODACTYL_API_TOKEN: 'test-token-12345'
+  PTERODACTYL_SERVER_ID: 'test-server-uuid'
+  DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/test/test'
+```
+
+When `CI=true`, the test_config.py script:
+- ✅ Skips real API calls (no network requests)
+- ✅ Validates configuration structure only
+- ✅ Runs fast and reliably
+- ✅ Never exposes real credentials
+- ✅ Uses placeholder values for testing
+
+This means:
+- **No actual API calls to Pterodactyl or Discord during tests**
+- **Tests run in seconds instead of minutes**
+- **GitHub Actions runners can't compromise real credentials**
+- **Tests pass/fail based on code logic, not external services**
 
 ### View test results:
 
@@ -117,12 +176,14 @@ The `.github/workflows/tests.yml` file automatically runs tests on:
 2. Click "Actions" tab
 3. Click latest workflow run
 4. Expand test jobs to see details
+5. Look for "Mode: CI/GitHub Actions (mocked APIs)" in test_config.py output
 
 ## What's NOT Tested (and why)
 
 ### Actual API Calls
 - **Why skip:** Third-party services (Discord, Pterodactyl) are their responsibility to maintain
-- **How to test:** Manual integration testing before deploying
+- **How to test in CI:** `test_config.py` validates structure without API calls
+- **How to test locally:** Run `python test_config.py` (real mode) on your machine with real credentials
 
 ### Network Communication
 - **Why skip:** Network is flaky and slow for CI/CD

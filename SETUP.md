@@ -42,14 +42,38 @@ sudo chmod +x /usr/local/bin/windrose-monitor
 
 ### 3. Configure the Monitor
 
-Copy the example configuration and customize it:
+The monitor supports two configuration methods (in priority order):
+
+#### Option A: Using Environment Variables (.env) - **Recommended**
+
+```bash
+# Copy the example .env file
+sudo cp .env.example /etc/windrose-monitor/.env
+
+# Edit with your actual credentials
+sudo nano /etc/windrose-monitor/.env
+```
+
+Set these required variables:
+
+```bash
+PTERODACTYL_API_URL=https://your-pterodactyl-panel.com
+PTERODACTYL_API_TOKEN=YOUR_PTERODACTYL_API_TOKEN
+PTERODACTYL_SERVER_ID=your-server-uuid
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN
+CHECK_INTERVAL_SECONDS=20
+```
+
+#### Option B: Using JSON Configuration File (Legacy)
+
+If you prefer JSON configuration:
 
 ```bash
 sudo cp config.example.json /etc/windrose-monitor/config.json
 sudo nano /etc/windrose-monitor/config.json
 ```
 
-Update these required fields in your `config.json`:
+Update these required fields:
 
 ```json
 {
@@ -70,7 +94,12 @@ Update these required fields in your `config.json`:
 }
 ```
 
-**Note**: The `config.json` file is excluded from version control (see `.gitignore`). Only `config.example.json` is committed to the repository.
+**Configuration Priority:**
+1. Environment variables from `.env` file (if exists) - **Recommended**
+2. `config.json` file (fallback for backward compatibility)
+3. Environment variables set in systemd service
+
+The `.env` and `config.json` files are excluded from version control (see `.gitignore`). Only `.env.example` and `config.example.json` are committed to the repository.
 
 **Getting your Pterodactyl API Token:**
 1. Go to your Pterodactyl panel

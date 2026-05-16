@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  # Set CI mode for test scripts to use mocked APIs
+  CI: 'true'
+  # Test environment variables (placeholder values for CI)
+  PTERODACTYL_API_URL: 'https://example-pterodactyl.com'
+  PTERODACTYL_API_TOKEN: 'test-token-12345'
+  PTERODACTYL_SERVER_ID: 'test-server-uuid-12345'
+  DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/test/test'
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -30,20 +39,26 @@ jobs:
       run: |
         python -m unittest discover -s . -p 'test_*.py' -v
     
+    - name: Run configuration validator (CI mode)
+      run: |
+        python test_config.py
+    
     - name: Validate config.example.json
       run: |
         python -m json.tool config.example.json > /dev/null
         echo "✓ config.example.json is valid JSON"
+    
+    - name: Validate .env.example
+      run: |
+        # Check that .env.example has the expected format
+        grep -E '^[A-Z_]+=' .env.example > /dev/null || true
+        echo "✓ .env.example format is valid"
     
     - name: Check Python syntax
       run: |
         python -m py_compile windrose_monitor.py
         python -m py_compile test_config.py
         echo "✓ All Python files have valid syntax"
-    
-    - name: Run config validation tests
-      run: |
-        python test_config.py --help 2>/dev/null || echo "✓ test_config.py loads successfully"
 
   lint:
     runs-on: ubuntu-latest

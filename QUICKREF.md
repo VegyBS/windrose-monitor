@@ -2,6 +2,26 @@
 
 ## Common Tasks
 
+### Configuration Management
+
+```bash
+# Edit environment variables (.env) - **Recommended**
+sudo nano /etc/windrose-monitor/.env
+
+# Edit JSON configuration (fallback)
+sudo nano /etc/windrose-monitor/config.json
+
+# Apply configuration changes (reload and restart)
+sudo systemctl daemon-reload
+sudo systemctl restart windrose-monitor
+
+# View current .env settings
+sudo cat /etc/windrose-monitor/.env
+
+# Validate .env syntax
+grep -E '^[A-Z_]+=' /etc/windrose-monitor/.env
+```
+
 ### Viewing Logs
 
 ```bash

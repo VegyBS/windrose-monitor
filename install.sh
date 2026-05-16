@@ -50,19 +50,31 @@ echo "  ✓ Dependencies installed"
 
 # Copy configuration template
 echo ""
-echo "Setting up configuration file..."
+echo "Setting up configuration..."
+
+# Setup .env file (recommended)
+if [ -f /etc/windrose-monitor/.env ]; then
+    echo "  ℹ .env file already exists at /etc/windrose-monitor/.env"
+else
+    cp .env.example /etc/windrose-monitor/.env
+    chmod 600 /etc/windrose-monitor/.env
+    chown windrose-monitor:windrose-monitor /etc/windrose-monitor/.env
+    echo "  ✓ .env file created from .env.example"
+    echo "  ⚠  You MUST edit /etc/windrose-monitor/.env with your settings:"
+    echo "     - PTERODACTYL_API_URL"
+    echo "     - PTERODACTYL_API_TOKEN"
+    echo "     - PTERODACTYL_SERVER_ID"
+    echo "     - DISCORD_WEBHOOK_URL"
+fi
+
+# Also support config.json for backwards compatibility
 if [ -f /etc/windrose-monitor/config.json ]; then
-    echo "  ℹ Configuration file already exists at /etc/windrose-monitor/config.json"
-    echo "  ℹ Skipping... (edit manually if needed)"
+    echo "  ℹ config.json already exists (will be used as fallback)"
 else
     cp config.example.json /etc/windrose-monitor/config.json
     chmod 600 /etc/windrose-monitor/config.json
     chown windrose-monitor:windrose-monitor /etc/windrose-monitor/config.json
-    echo "  ✓ Configuration file created from config.example.json"
-    echo "  ⚠  You MUST edit /etc/windrose-monitor/config.json with your settings:"
-    echo "     - Pterodactyl API URL and token"
-    echo "     - Discord webhook URL"
-    echo "     - Server ID"
+    echo "  ℹ config.json created (optional, .env is preferred)"
 fi
 
 # Create symlink
