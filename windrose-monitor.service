@@ -12,20 +12,16 @@ Group=windrose-monitor
 # Ensure predictable working directory
 WorkingDirectory=/var/lib/windrose-monitor
 
-# Load environment variables
+# Load environment variables from .env file
 EnvironmentFile=/etc/windrose-monitor/.env
 
-# Use the venv Python selected during installation
-ExecStart=/var/lib/windrose-monitor/venv/bin/python /usr/local/bin/windrose-monitor
+# Execute using the virtual environment Python
+ExecStart=/var/lib/windrose-monitor/venv/bin/python /opt/windrose-monitor/windrose_monitor.py
 
 # Restart behaviour
 Restart=on-failure
 RestartSec=10
 SyslogIdentifier=windrose-monitor
-
-# --- File Logging ---
-StandardOutput=append:/var/log/windrose-monitor/windrose-monitor.log
-StandardError=append:/var/log/windrose-monitor/windrose-monitor.log
 
 # --- Security Hardening ---
 NoNewPrivileges=true
