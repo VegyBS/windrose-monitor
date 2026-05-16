@@ -202,168 +202,128 @@ class WindroseMonitor:
             logger.error(f"Failed to fetch logs from Pterodactyl API: {e}")
             return None
 
-    def _get_websocket_token(self) -> Optional[dict]:
-        """Request a temporary websocket token and socket URL from the Panel."""
-        # Return cached token if still valid
-        try:
-            if self._ws_token_data and self._ws_token_expiry and time.time() < (self._ws_token_expiry - 30):
-                return self._ws_token_data
+def _get_websocket_token(self) -> Optional[dict]:
+    """Request a temporary websocket token and socket URL from the Panel."""
+    try:
+        if self._ws_token_data and self._ws_token_expiry and time.time() < (self._ws_token_expiry - 30):
+            return self._ws_token_data
 
-            url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/websocket"
-            resp = self.api_session.get(url, timeout=10, headers={
-                'Accept': 'Application/vnd.pterodactyl.v1+json'
-            })
-            resp.raise_for_status()
-            data = resp.json().get('data')
+        url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/websocket"
+        resp = self.api_session.get(url, timeout=10, headers={
+            'Accept': 'Application/vnd.pterodactyl.v1+json'
+        })
+        resp.raise_for_status()
+        data = resp.json().get('data')
 
-            if data and isinstance(data, dict):
-                socket = data.get('socket')
-                try:
-                    host = urlparse(socket).netloc if socket else 'unknown'
-                except Exception:
-                    host = 'unknown'
-                logger.info(f"Obtained websocket token, socket host: {host}")
+        if data and isinstance(data, dict):
+            logger.info(f"Obtained websocket token, socket URL: {data.get('socket')}")
 
-            # Cache token expiry if present in JWT
-            token = data.get('token') if data else None
-            if token:
-                try:
-                    parts = token.split('.')
-                    if len(parts) >= 2:
-                        payload = parts[1]
-                        padding = '=' * ((4 - len(payload) % 4) % 4)
-                        decoded = base64.urlsafe_b64decode(payload + padding)
-                        payload_json = json.loads(decoded)
-                        exp = int(payload_json.get('exp', 0))
-                        self._ws_token_expiry = exp
-                        self._ws_token_data = data
-                except Exception:
-                    # If parsing fails, still store the data without expiry
+        token = data.get('token') if data else None
+        if token:
+            try:
+                parts = token.split('.')
+                if len(parts) >= 2:
+                    payload = parts[1]
+                    padding = '=' * ((4 - len(payload) % 4) % 4)
+                    decoded = base64.urlsafe_b64decode(payload + padding)
+                    payload_json = json.loads(decoded)
+                    exp = int(payload_json.get('exp', 0))
+                    self._ws_token_expiry = exp
                     self._ws_token_data = data
-                    self._ws_token_expiry = 0
-
-            return data
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Could not obtain websocket token: {e}")
-            return None
-
-    def _ws_listener(self):
-        """Background thread: maintain websocket connection and buffer console output."""
-        backoff = 1
-        while not self._ws_stop.is_set():
-            token_data = self._get_websocket_token()
-            if not token_data:
-                # If token endpoint is rate-limiting, back off longer
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 300)
-                continue
-
-            token = token_data.get('token')
-            socket_url = token_data.get('socket')
-            if not token or not socket_url:
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 60)
-                continue
-
-            # Allow optional overrides for Origin and socket host (useful when running on same host)
-            orig_socket_url = socket_url
-            websocket_host_override = self.config['pterodactyl'].get('websocket_host')
-            websocket_origin_override = self.config['pterodactyl'].get('websocket_origin')
-
-            try:
-                parsed = urlparse(socket_url)
-                orig_netloc = parsed.netloc
-                orig_host = orig_netloc.split(':')[0]
             except Exception:
-                parsed = None
-                orig_netloc = None
-                orig_host = None
+                self._ws_token_data = data
+                self._ws_token_expiry = 0
 
-            # If a host override is provided, replace the socket URL host but preserve original host for Host header/SNI
-            if websocket_host_override:
+        return data
+
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Could not obtain websocket token: {e}")
+        return None
+
+def _ws_listener(self):
+    """Background thread: maintain websocket connection and buffer console output."""
+    backoff = 1
+
+    while not self._ws_stop.is_set():
+        token_data = self._get_websocket_token()
+        if not token_data:
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 300)
+            continue
+
+        token = token_data.get('token')
+        socket_url = token_data.get('socket')
+
+        if not token or not socket_url:
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+            continue
+
+        # *** CRITICAL FIX ***
+        # Use the WebSocket URL EXACTLY as returned by the API.
+        # Do NOT rewrite host, port, path, or scheme.
+        logger.info(f"Connecting to WebSocket at {socket_url}")
+
+        try:
+            ws = websocket.create_connection(
+                socket_url,
+                timeout=15,
+                header=[f"Authorization: Bearer {token}"],
+                subprotocols=['pterodactyl']
+            )
+
+            # Authenticate
+            auth_msg = json.dumps({"event": "auth", "args": [token]})
+            ws.send(auth_msg)
+            logger.info("WebSocket connection established and auth message sent")
+
+            backoff = 1
+
+            while not self._ws_stop.is_set():
                 try:
-                    socket_url = parsed._replace(netloc=websocket_host_override).geturl()
-                except Exception:
-                    socket_url = socket_url
+                    raw = ws.recv()
+                    if not raw:
+                        break
 
-            # Choose Origin header: explicit override -> panel API URL fallback
-            origin_value = websocket_origin_override or self.config['pterodactyl']['api_url']
+                    try:
+                        msg = json.loads(raw)
+                    except Exception:
+                        continue
 
-            headers = [f"Authorization: Bearer {token}", f"Origin: {origin_value}"]
-            # If we have the original netloc, send it as Host header so Wings sees expected Host
-            if orig_netloc:
-                headers.append(f"Host: {orig_netloc}")
-            # Some Wings setups require the pterodactyl subprotocol during handshake
-            headers.append('Sec-WebSocket-Protocol: pterodactyl')
+                    event = msg.get('event')
+                    args = msg.get('args', [])
+
+                    if event == 'console output' and args:
+                        line = args[0]
+                        with self._ws_lock:
+                            self._ws_buffer.append(line)
+
+                    elif event == 'jwt error':
+                        logger.warning("WebSocket reported JWT error, refreshing token")
+                        break
+
+                except websocket.WebSocketConnectionClosedException:
+                    break
+                except Exception as e:
+                    logger.debug(f"WebSocket recv error: {e}")
+                    break
 
             try:
-                # Use websocket-client to connect
-                try:
-                    host = urlparse(socket_url).netloc
-                except Exception:
-                    host = socket_url
-                logger.info(f"Connecting to WebSocket at {host} (requesting subprotocol 'pterodactyl')")
-                # Prepare ssl options; if we replaced the socket host but want SNI for original host,
-                # include server_hostname in sslopt so cert validation uses the original host.
-                sslopt = {"cert_reqs": ssl.CERT_REQUIRED}
-                if websocket_host_override and orig_host:
-                    sslopt['server_hostname'] = orig_host
+                ws.close()
+            except Exception:
+                pass
 
-                # Request the 'pterodactyl' subprotocol explicitly; many Wings nodes expect it
-                ws = websocket.create_connection(
-                    socket_url,
-                    timeout=15,
-                    header=headers,
-                    sslopt=sslopt,
-                    subprotocols=['pterodactyl']
-                )
-                # Authenticate
-                auth_msg = json.dumps({"event": "auth", "args": [token]})
-                ws.send(auth_msg)
-                logger.info("WebSocket connection established and auth message sent")
+        except Exception as e:
+            msg = str(e)
+            logger.warning(f"WebSocket connection failed: {msg}")
 
-                backoff = 1
-                while not self._ws_stop.is_set():
-                    try:
-                        raw = ws.recv()
-                        if not raw:
-                            break
-                        try:
-                            msg = json.loads(raw)
-                        except Exception:
-                            continue
+            if '403' in msg or 'Forbidden' in msg:
+                logger.warning("WebSocket handshake forbidden — backing off 5 minutes")
+                time.sleep(300)
+            else:
+                time.sleep(backoff)
 
-                        event = msg.get('event')
-                        args = msg.get('args', [])
-
-                        if event == 'console output' and args:
-                            line = args[0]
-                            with self._ws_lock:
-                                self._ws_buffer.append(line)
-                        elif event == 'jwt error':
-                            logger.warning('WebSocket reported JWT error, refreshing token')
-                            break
-                    except websocket.WebSocketConnectionClosedException:
-                        break
-                    except Exception as e:
-                        logger.debug(f"WebSocket recv error: {e}")
-                        break
-
-                try:
-                    ws.close()
-                except Exception:
-                    pass
-            except Exception as e:
-                # If handshake returned 403, the panel denied the websocket connection.
-                msg = str(e)
-                logger.warning(f"WebSocket connection failed: {msg}")
-                # If forbidden, likely permissions/token issue — back off longer to avoid repeated failures
-                if '403' in msg or 'Forbidden' in msg:
-                    logger.warning('WebSocket handshake forbidden: token may lack websocket.connect permission or Origin/subprotocol mismatch. Backing off 5 minutes.')
-                    time.sleep(300)
-                else:
-                    time.sleep(backoff)
-                backoff = min(backoff * 2, 300)
+            backoff = min(backoff * 2, 300)
     
     def parse_player_list(self, logs: str) -> Set[str]:
         """Parse player list from logs
