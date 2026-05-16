@@ -90,6 +90,10 @@ class WindroseMonitor:
                 'api_url': os.getenv('PTERODACTYL_API_URL', ''),
                 'api_token': os.getenv('PTERODACTYL_API_TOKEN', ''),
                 'server_id': os.getenv('PTERODACTYL_SERVER_ID', '')
+                ,
+                # Optional websocket overrides (when running on same host or behind proxies)
+                'websocket_origin': os.getenv('PTERODACTYL_WEBSOCKET_ORIGIN', ''),
+                'websocket_host': os.getenv('PTERODACTYL_WEBSOCKET_HOST', '')
             },
             'discord': {
                 'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', '')
@@ -232,7 +236,34 @@ class WindroseMonitor:
                 backoff = min(backoff * 2, 60)
                 continue
 
-            headers = [f"Authorization: Bearer {token}", f"Origin: {self.config['pterodactyl']['api_url']}"]
+            # Allow optional overrides for Origin and socket host (useful when running on same host)
+            orig_socket_url = socket_url
+            websocket_host_override = self.config['pterodactyl'].get('websocket_host')
+            websocket_origin_override = self.config['pterodactyl'].get('websocket_origin')
+
+            try:
+                parsed = urlparse(socket_url)
+                orig_netloc = parsed.netloc
+                orig_host = orig_netloc.split(':')[0]
+            except Exception:
+                parsed = None
+                orig_netloc = None
+                orig_host = None
+
+            # If a host override is provided, replace the socket URL host but preserve original host for Host header/SNI
+            if websocket_host_override:
+                try:
+                    socket_url = parsed._replace(netloc=websocket_host_override).geturl()
+                except Exception:
+                    socket_url = socket_url
+
+            # Choose Origin header: explicit override -> panel API URL fallback
+            origin_value = websocket_origin_override or self.config['pterodactyl']['api_url']
+
+            headers = [f"Authorization: Bearer {token}", f"Origin: {origin_value}"]
+            # If we have the original netloc, send it as Host header so Wings sees expected Host
+            if orig_netloc:
+                headers.append(f"Host: {orig_netloc}")
             # Some Wings setups require the pterodactyl subprotocol during handshake
             headers.append('Sec-WebSocket-Protocol: pterodactyl')
 
@@ -243,12 +274,18 @@ class WindroseMonitor:
                 except Exception:
                     host = socket_url
                 logger.info(f"Connecting to WebSocket at {host} (requesting subprotocol 'pterodactyl')")
+                # Prepare ssl options; if we replaced the socket host but want SNI for original host,
+                # include server_hostname in sslopt so cert validation uses the original host.
+                sslopt = {"cert_reqs": ssl.CERT_REQUIRED}
+                if websocket_host_override and orig_host:
+                    sslopt['server_hostname'] = orig_host
+
                 # Request the 'pterodactyl' subprotocol explicitly; many Wings nodes expect it
                 ws = websocket.create_connection(
                     socket_url,
                     timeout=15,
                     header=headers,
-                    sslopt={"cert_reqs": ssl.CERT_REQUIRED},
+                    sslopt=sslopt,
                     subprotocols=['pterodactyl']
                 )
                 # Authenticate
