@@ -117,6 +117,8 @@ The `config.json` file contains all settings:
 - ✅ JSON state persistence
 - ✅ Automatic error recovery
 - ✅ Comprehensive logging
+- ✅ Unit tests with mocked APIs
+- ✅ Automated testing via GitHub Actions
 
 ## Typical Discord Output
 
