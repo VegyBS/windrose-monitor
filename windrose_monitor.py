@@ -12,6 +12,13 @@ import requests
 import os
 import subprocess
 import sys
+import threading
+import ssl
+from collections import deque
+try:
+    import websocket
+except Exception:
+    websocket = None
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set, Optional
@@ -56,6 +63,16 @@ class WindroseMonitor:
         self.api_session.headers.update({
             'Authorization': f"Bearer {self.config['pterodactyl']['api_token']}"
         })
+        # WebSocket console buffer and listener
+        self._ws_buffer = deque(maxlen=5000)
+        self._ws_lock = threading.Lock()
+        self._ws_thread = None
+        self._ws_stop = threading.Event()
+
+        # Start websocket listener thread if websocket-client is available
+        if websocket is not None:
+            self._ws_thread = threading.Thread(target=self._ws_listener, daemon=True)
+            self._ws_thread.start()
         
     def _load_config(self, config_path: str) -> Dict:
         """Load configuration from environment variables or JSON file
@@ -140,17 +157,105 @@ class WindroseMonitor:
             json.dump(self.state, f, indent=2)
     
     def get_server_logs(self) -> Optional[str]:
-        """Fetch server logs from Pterodactyl API"""
+        """Fetch server logs.
+
+        Prefer the live WebSocket buffer; fall back to the HTTP logs endpoint if empty.
+        """
+        # Prefer websocket buffer if populated
+        with self._ws_lock:
+            if len(self._ws_buffer) > 0:
+                return "\n".join(list(self._ws_buffer))
+
+        # Fallback: HTTP logs endpoint (legacy)
         try:
             url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/logs"
-            response = self.api_session.get(url, timeout=10)
+            response = self.api_session.get(url, timeout=10, headers={
+                'Accept': 'Application/vnd.pterodactyl.v1+json'
+            })
             response.raise_for_status()
-            
             data = response.json()
             return data.get('attributes', {}).get('content', '')
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to fetch logs from Pterodactyl API: {e}")
             return None
+
+    def _get_websocket_token(self) -> Optional[dict]:
+        """Request a temporary websocket token and socket URL from the Panel."""
+        try:
+            url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/websocket"
+            resp = self.api_session.get(url, timeout=10, headers={
+                'Accept': 'Application/vnd.pterodactyl.v1+json'
+            })
+            resp.raise_for_status()
+            data = resp.json().get('data')
+            return data
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Could not obtain websocket token: {e}")
+            return None
+
+    def _ws_listener(self):
+        """Background thread: maintain websocket connection and buffer console output."""
+        backoff = 1
+        while not self._ws_stop.is_set():
+            token_data = self._get_websocket_token()
+            if not token_data:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+                continue
+
+            token = token_data.get('token')
+            socket_url = token_data.get('socket')
+            if not token or not socket_url:
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+                continue
+
+            headers = [f"Authorization: Bearer {token}", f"Origin: {self.config['pterodactyl']['api_url']}"]
+
+            try:
+                # Use websocket-client to connect
+                ws = websocket.create_connection(socket_url, timeout=15, header=headers, sslopt={"cert_reqs": ssl.CERT_REQUIRED})
+                # Authenticate
+                auth_msg = json.dumps({"event": "auth", "args": [token]})
+                ws.send(auth_msg)
+
+                backoff = 1
+                while not self._ws_stop.is_set():
+                    try:
+                        raw = ws.recv()
+                        if not raw:
+                            break
+                        try:
+                            msg = json.loads(raw)
+                        except Exception:
+                            continue
+
+                        event = msg.get('event')
+                        args = msg.get('args', [])
+
+                        if event == 'console output' and args:
+                            line = args[0]
+                            with self._ws_lock:
+                                self._ws_buffer.append(line)
+                        elif event == 'jwt error':
+                            logger.warning('WebSocket reported JWT error, refreshing token')
+                            break
+                    except websocket.WebSocketConnectionClosedException:
+                        break
+                    except Exception as e:
+                        logger.debug(f"WebSocket recv error: {e}")
+                        break
+
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"WebSocket connection failed: {e}")
+
+            # Wait before reconnecting
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 60)
     
     def parse_player_list(self, logs: str) -> Set[str]:
         """Parse player list from logs
