@@ -94,8 +94,7 @@ class WindroseMonitor:
             'pterodactyl': {
                 'api_url': os.getenv('PTERODACTYL_API_URL', ''),
                 'api_token': os.getenv('PTERODACTYL_API_TOKEN', ''),
-                'server_id': os.getenv('PTERODACTYL_SERVER_ID', '')
-                ,
+                'server_id': os.getenv('PTERODACTYL_SERVER_ID', ''),
                 # Optional websocket overrides (when running on same host or behind proxies)
                 'websocket_origin': os.getenv('PTERODACTYL_WEBSOCKET_ORIGIN', ''),
                 'websocket_host': os.getenv('PTERODACTYL_WEBSOCKET_HOST', '')
@@ -151,16 +150,22 @@ class WindroseMonitor:
         if state_file.exists():
             try:
                 with open(state_file, 'r') as f:
-                    return json.load(f)
+                    state = json.load(f)
             except (json.JSONDecodeError, IOError) as e:
                 logger.warning(f"Could not load state file: {e}")
+                state = {}
+        else:
+            state = {}
         
-        return {
-            'players': [],
-            'player_count': 0,
-            'last_update': None,
-            'cpu_profile': 'balanced'
-        }
+        # Defaults
+        state.setdefault('players', [])
+        state.setdefault('player_count', 0)
+        state.setdefault('last_update', None)
+        state.setdefault('cpu_profile', 'balanced')
+        state.setdefault('performance_counter', 0)
+        state.setdefault('balanced_counter', 0)
+
+        return state
     
     def _save_state(self):
         """Save state to JSON file"""
@@ -168,6 +173,12 @@ class WindroseMonitor:
         state_file.parent.mkdir(parents=True, exist_ok=True)
         with open(state_file, 'w') as f:
             json.dump(self.state, f, indent=2)
+
+    def _alert_ws_dead(self, reason: str):
+        """Send a Discord alert when WebSocket dies or misbehaves."""
+        msg = f"⚠️ **WebSocket Disconnected** — {reason}"
+        logger.warning(msg)
+        self.send_discord_message(msg)
     
     def get_server_logs(self) -> Optional[str]:
         """Fetch server logs.
@@ -199,7 +210,7 @@ class WindroseMonitor:
             data = response.json()
             return data.get('attributes', {}).get('content', '')
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to fetch logs from Pterodactyl API: {e}")
+            logger.error(f"Failed to fetch logs from Pterodactyl API: {e}", exc_info=True)
             return None
 
     def _get_websocket_token(self) -> Optional[dict]:
@@ -230,6 +241,7 @@ class WindroseMonitor:
                         exp = int(payload_json.get('exp', 0))
                         self._ws_token_expiry = exp
                         self._ws_token_data = data
+                        logger.info(f"WebSocket token expires at {datetime.fromtimestamp(self._ws_token_expiry)}")
                 except Exception:
                     self._ws_token_data = data
                     self._ws_token_expiry = 0
@@ -237,7 +249,7 @@ class WindroseMonitor:
             return data
 
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Could not obtain websocket token: {e}")
+            logger.warning(f"Could not obtain websocket token: {e}", exc_info=True)
             return None
 
     def _ws_listener(self):
@@ -245,8 +257,10 @@ class WindroseMonitor:
         backoff = 1
 
         while not self._ws_stop.is_set():
+            logger.info("Attempting WebSocket reconnect…")
             token_data = self._get_websocket_token()
             if not token_data:
+                logger.info(f"Backoff now {backoff} seconds (no token)")
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 300)
                 continue
@@ -255,13 +269,12 @@ class WindroseMonitor:
             socket_url = token_data.get('socket')
 
             if not token or not socket_url:
+                logger.info(f"Backoff now {backoff} seconds (missing token or socket URL)")
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 60)
                 continue
 
-            # *** CRITICAL FIX ***
             # Use the WebSocket URL EXACTLY as returned by the API.
-            # Do NOT rewrite host, port, path, or scheme.
             logger.info(f"Connecting to WebSocket at {socket_url}")
 
             try:
@@ -278,12 +291,16 @@ class WindroseMonitor:
                 logger.info("WebSocket connection established and auth message sent")
 
                 backoff = 1
+                last_msg = time.time()
 
                 while not self._ws_stop.is_set():
                     try:
                         raw = ws.recv()
                         if not raw:
+                            logger.warning("WebSocket recv returned empty payload — reconnecting")
                             break
+
+                        last_msg = time.time()
 
                         try:
                             msg = json.loads(raw)
@@ -293,36 +310,62 @@ class WindroseMonitor:
                         event = msg.get('event')
                         args = msg.get('args', [])
 
-                        if event == 'console output' and args:
+                        if event == 'auth success':
+                            logger.info("WebSocket auth success")
+                            backoff = 1
+
+                        elif event == 'jwt error':
+                            logger.warning("WebSocket reported JWT error, refreshing token")
+                            self._alert_ws_dead("JWT expired — refreshing token")
+                            self._ws_token_data = None
+                            self._ws_token_expiry = 0
+                            break
+
+                        elif event == 'console output' and args:
                             line = args[0]
                             with self._ws_lock:
                                 self._ws_buffer.append(line)
 
-                        elif event == 'jwt error':
-                            logger.warning("WebSocket reported JWT error, refreshing token")
+                        # Stale socket detection
+                        if time.time() - last_msg > 30:
+                            logger.warning("WebSocket stale for 30s — reconnecting")
+                            self._alert_ws_dead("No messages for 30 seconds (stale socket)")
                             break
 
                     except websocket.WebSocketConnectionClosedException:
+                        logger.warning("WebSocket connection closed by remote")
                         break
                     except Exception as e:
-                        logger.debug(f"WebSocket recv error: {e}")
+                        logger.debug(f"WebSocket recv error: {e}", exc_info=True)
                         break
 
                 try:
                     ws.close()
+                    logger.info("WebSocket connection closed — cleaning up")
                 except Exception:
                     pass
 
             except Exception as e:
                 msg = str(e)
                 logger.warning(f"WebSocket connection failed: {msg}")
+                logger.error(f"WebSocket error: {msg}", exc_info=True)
 
-                if '403' in msg or 'Forbidden' in msg:
+                lower = msg.lower()
+                if "ssl" in lower or "handshake" in lower:
+                    self._alert_ws_dead("SSL handshake failure")
+                    logger.warning("SSL handshake issue — retrying in 5 seconds")
+                    time.sleep(5)
+                    continue
+
+                if '403' in msg or 'forbidden' in lower:
+                    self._alert_ws_dead("403 Forbidden — check API token permissions")
                     logger.warning("WebSocket handshake forbidden — backing off 5 minutes")
                     time.sleep(300)
-                else:
-                    time.sleep(backoff)
+                    continue
 
+                self._alert_ws_dead(f"Connection failed: {msg}")
+                logger.info(f"Backoff now {backoff} seconds")
+                time.sleep(backoff)
                 backoff = min(backoff * 2, 300)
     
     def parse_player_list(self, logs: str) -> Set[str]:
@@ -415,7 +458,7 @@ class WindroseMonitor:
                 self.state['cpu_profile'] = profile
             return success
         except Exception as e:
-            logger.error(f"Error changing CPU profile: {e}")
+            logger.error(f"Error changing CPU profile: {e}", exc_info=True)
             return False
     
     def send_discord_message(self, message: str) -> bool:
@@ -439,7 +482,7 @@ class WindroseMonitor:
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to send Discord message: {e}")
+            logger.error(f"Failed to send Discord message: {e}", exc_info=True)
             return False
     
     def check_and_update(self):
@@ -486,13 +529,21 @@ class WindroseMonitor:
         self.state['player_count'] = current_count
         self.state['last_update'] = datetime.now().isoformat()
         
-        # Manage CPU profile
-        if current_count > 0 and self.state.get('cpu_profile') != 'performance':
-            logger.info("Players detected, switching to performance CPU profile")
-            self.set_cpu_profile(self.config['cpu_profile']['performance_profile'])
-        elif current_count == 0 and self.state.get('cpu_profile') != 'balanced':
-            logger.info("No players, switching to balanced CPU profile")
-            self.set_cpu_profile(self.config['cpu_profile']['balanced_profile'])
+        # CPU profile hysteresis
+        if current_count > 0:
+            self.state['performance_counter'] = self.state.get('performance_counter', 0) + 1
+            self.state['balanced_counter'] = 0
+
+            if self.state['performance_counter'] >= 2 and self.state.get('cpu_profile') != 'performance':
+                logger.info("Hysteresis: players present for 2 checks, switching to performance CPU profile")
+                self.set_cpu_profile(self.config['cpu_profile']['performance_profile'])
+        else:
+            self.state['balanced_counter'] = self.state.get('balanced_counter', 0) + 1
+            self.state['performance_counter'] = 0
+
+            if self.state['balanced_counter'] >= 3 and self.state.get('cpu_profile') != 'balanced':
+                logger.info("Hysteresis: no players for 3 checks, switching to balanced CPU profile")
+                self.set_cpu_profile(self.config['cpu_profile']['balanced_profile'])
         
         # Save state
         self._save_state()
