@@ -42,11 +42,16 @@ chown windrose-monitor:windrose-monitor /var/lib/windrose-monitor
 chmod 750 /var/lib/windrose-monitor
 echo "  ✓ Directories created and configured"
 
-# Install Python dependencies
+#Create venv and install dependencies
+echo "Creating Python virtual environment..."
+python3 -m venv /var/lib/windrose-monitor/venv
+source /var/lib/windrose-monitor/venv/bin/activate
+pip install --upgrade pip
 echo ""
-echo "Installing Python dependencies..."
-pip3 install -r requirements.txt
-echo "  ✓ Dependencies installed"
+echo "Installing Python dependencies..."w
+pip install -r requirements.txt
+deactivate
+echo "  ✓ Virtual environment created and dependencies installed"
 
 # Copy configuration template
 echo ""
