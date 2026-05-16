@@ -119,6 +119,19 @@ chown windrose-monitor:windrose-monitor /opt/windrose-monitor/windrose_monitor.p
 echo "  ✓ Application script installed at /opt/windrose-monitor/windrose_monitor.py"
 echo ""
 
+# --- Cleanup old symlinks ----------------------------------------------------- [INSERT HERE]
+echo "Cleaning up old installations..."
+if [ -L /usr/local/bin/windrose-monitor ]; then
+    rm /usr/local/bin/windrose-monitor
+    echo "  ✓ Removed old symlink"
+fi
+
+# Ensure /opt/windrose-monitor is accessible
+chown -R windrose-monitor:windrose-monitor /opt/windrose-monitor
+chmod 755 /opt/windrose-monitor
+echo "  ✓ Directory permissions set"
+echo ""
+
 # --- Configuration files ------------------------------------------------------
 echo "Setting up configuration..."
 
