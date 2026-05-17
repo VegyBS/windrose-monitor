@@ -8,22 +8,22 @@ It is written for day‑to‑day operators, SREs, and administrators who need to
 ## 1. Service Lifecycle 🔄
 
 ### Start the service
-sudo systemctl start windrose-monitor
+`sudo systemctl start windrose-monitor`
 
 ### Stop the service
-sudo systemctl stop windrose-monitor
+`sudo systemctl stop windrose-monitor`
 
 ### Restart the service
-sudo systemctl restart windrose-monitor
+`sudo systemctl restart windrose-monitor`
 
 ### Enable on boot
-sudo systemctl enable windrose-monitor
+`sudo systemctl enable windrose-monitor`
 
 ### Check status
-sudo systemctl status windrose-monitor
+`sudo systemctl status windrose-monitor`
 
 ### Reload after config changes
-sudo systemctl restart windrose-monitor
+`sudo systemctl restart windrose-monitor`
 
 The monitor does not support systemctl reload because it maintains WebSocket state; restart is required.
 
@@ -32,10 +32,10 @@ The monitor does not support systemctl reload because it maintains WebSocket sta
 ## 2. Observability & Monitoring 📊
 
 ### View logs (live)
-sudo journalctl -u windrose-monitor -f
+`sudo journalctl -u windrose-monitor -f`
 
 ### View recent logs
-sudo journalctl -u windrose-monitor --since "1 hour ago"
+`sudo journalctl -u windrose-monitor --since "1 hour ago"`
 
 ### Log patterns to expect
 
@@ -57,7 +57,7 @@ Critical:
 - Corrupted state.json  
 
 ### Check current state
-sudo cat /var/lib/windrose-monitor/state.json
+`sudo cat /var/lib/windrose-monitor/state.json`
 
 This file contains:
 - active players  
@@ -155,20 +155,20 @@ Actions:
 Logs are handled by journald.  
 To clear old logs:
 
-sudo journalctl --vacuum-time=7d
+`sudo journalctl --vacuum-time=7d`
 
 ### Update dependencies
 From the repo directory:
 
-git pull  
-sudo bash install.sh  
-sudo systemctl restart windrose-monitor
+`git pull`
+`sudo bash install.sh`
+`sudo systemctl restart windrose-monitor`
 
 ### Clean old state
 If needed:
 
-sudo rm /var/lib/windrose-monitor/state.json  
-sudo systemctl restart windrose-monitor
+`sudo rm /var/lib/windrose-monitor/state.json`
+`sudo systemctl restart windrose-monitor`
 
 ### Verify systemd sandboxing
 Check:
@@ -184,7 +184,7 @@ Check:
 ## 6. Performance Tuning ⚡
 
 ### Adjust check interval
-CHECK_INTERVAL_SECONDS in .env controls how often:
+`CHECK_INTERVAL_SECONDS` in .env controls how often:
 
 - logs are parsed  
 - player changes are detected  
@@ -218,11 +218,11 @@ Disable player count messages if needed.
 ### Validate systemd hardening
 Ensure the service still includes:
 
-- ProtectSystem=strict  
-- ProtectHome=true  
-- RestrictSUIDSGID=true  
-- MemoryDenyWriteExecute=true  
-- ReadWritePaths=/sys/devices/system/cpu  
+- `ProtectSystem=strict`
+- `ProtectHome=true`
+- `RestrictSUIDSGID=true`
+- `MemoryDenyWriteExecute=true`
+- `ReadWritePaths=/sys/devices/system/cpu`
 
 ### Check for privilege drift
 Ensure the windrose-monitor user has no unexpected permissions.
@@ -234,14 +234,14 @@ Ensure the windrose-monitor user has no unexpected permissions.
 ### Backup
 Save:
 
-- /etc/windrose-monitor/.env  
-- /etc/windrose-monitor/config.json  
-- /var/lib/windrose-monitor/state.json  
+- `/etc/windrose-monitor/.env`
+- `/etc/windrose-monitor/config.json`
+- `/var/lib/windrose-monitor/state.json`
 
 ### Restore
 Copy files back into place and restart:
 
-sudo systemctl restart windrose-monitor
+`sudo systemctl restart windrose-monitor`
 
 ---
 
@@ -266,19 +266,19 @@ If needed:
 ---
 
 ## 10. Operational Architecture Diagram 🗺️
-
-Windrose Server  
-↓  
-Wings WebSocket  
-↓  
-Windrose Monitor  
-↓  
-State File  
-↓  
-CPU sysfs  
-↓  
-Discord Webhook
-
+```
+      Windrose Server  
+             ↓  
+      Wings WebSocket  
+             ↓  
+      Windrose Monitor  
+             ↓  
+         State File  
+             ↓  
+          CPU sysfs  
+             ↓  
+       Discord Webhook
+```
 This is the full data flow the monitor depends on.
 
 ---
