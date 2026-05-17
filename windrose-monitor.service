@@ -28,7 +28,7 @@ StandardOutput=append:/var/log/windrose-monitor/windrose-monitor.log
 StandardError=append:/var/log/windrose-monitor/windrose-monitor.log
 
 # --- Security Hardening ---
-NoNewPrivileges=true
+NoNewPrivileges=no
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict

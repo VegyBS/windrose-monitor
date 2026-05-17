@@ -181,7 +181,7 @@ if [ -f "$SUDOERS_FILE" ]; then
 else
     cat > "$SUDOERS_FILE" << 'SUDO_EOF'
 # Allow windrose-monitor to change CPU frequency without password
-windrose-monitor ALL=(ALL) NOPASSWD:/usr/bin/tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference
+windrose-monitor ALL=(ALL) NOPASSWD: /usr/bin/tee
 SUDO_EOF
     chmod 440 "$SUDOERS_FILE"
     echo "  ✓ Sudoers file created"

@@ -68,7 +68,7 @@ class WindroseMonitor:
         # WebSocket console buffer and listener
         self._ws_buffer = deque(maxlen=5000)
         self._ws_lock = threading.Lock()
-        self._ws_thread = None
+        self._ws_thread: Optional[threading.Thread] = None
         self._ws_stop = threading.Event()
 
         # Cached websocket token data to avoid hitting token endpoint repeatedly
@@ -77,9 +77,12 @@ class WindroseMonitor:
 
         # Start websocket listener thread if websocket-client is available
         if websocket is not None:
-            logger.info("websocket-client available, starting WebSocket listener thread")
-            self._ws_thread = threading.Thread(target=self._ws_listener, daemon=True)
-            self._ws_thread.start()
+            if self._ws_thread is None or not self._ws_thread.is_alive():
+                logger.info("websocket-client available, starting WebSocket listener thread")
+                self._ws_thread = threading.Thread(target=self._ws_listener, daemon=True)
+                self._ws_thread.start()
+            else:
+                logger.info("WebSocket listener thread already running; not starting another")
         else:
             logger.warning("websocket-client library not available; WebSocket log streaming disabled")
         
@@ -175,10 +178,10 @@ class WindroseMonitor:
             json.dump(self.state, f, indent=2)
 
     def _alert_ws_dead(self, reason: str):
-        """Send a Discord alert when WebSocket dies or misbehaves."""
+        """Log when WebSocket dies or misbehaves (no Discord spam)."""
         msg = f"⚠️ **WebSocket Disconnected** — {reason}"
         logger.warning(msg)
-        self.send_discord_message(msg)
+        # Intentionally NOT sending to Discord to avoid spam
     
     def get_server_logs(self) -> Optional[str]:
         """Fetch server logs.
@@ -372,17 +375,20 @@ class WindroseMonitor:
         """Parse player list from logs
         
         Players are in BOTH Connected Accounts and Reserved Accounts sections.
-        Disconnected Accounts is historical and should be ignored.
+        Disconnected Accounts are used to indicate players that have left and
+        should not be counted if they are no longer in Connected/Reserved.
         
         Returns unique set of currently active players.
         """
-        players = set()
+        connected_players: Set[str] = set()
+        reserved_players: Set[str] = set()
+        disconnected_players: Set[str] = set()
+
         lines = logs.split('\n')
-        
         current_section = None
         
-        for i, line in enumerate(lines):
-            # Check which section we're in
+        for line in lines:
+            # Section detection
             if 'Connected Accounts' in line:
                 current_section = 'connected'
                 continue
@@ -390,25 +396,34 @@ class WindroseMonitor:
                 current_section = 'reserved'
                 continue
             elif 'Disconnected Accounts' in line:
-                # Stop processing - we don't care about historical disconnects
-                break
+                current_section = 'disconnected'
+                continue
             
-            # Only parse Connected and Reserved sections
-            if current_section in ['connected', 'reserved']:
-                # Look for player name in format: "Name 'PlayerName'"
+            # Only parse lines inside known sections
+            if current_section in ['connected', 'reserved', 'disconnected']:
                 if "Name '" in line:
                     try:
-                        # Extract player name from "Name 'PlayerName'."
                         start = line.find("Name '") + len("Name '")
                         end = line.find("'", start)
                         if start > len("Name '") - 1 and end > start:
                             player_name = line[start:end].strip()
-                            if player_name:  # Only add non-empty names
-                                players.add(player_name)
+                            if player_name:
+                                if current_section == 'connected':
+                                    connected_players.add(player_name)
+                                elif current_section == 'reserved':
+                                    reserved_players.add(player_name)
+                                elif current_section == 'disconnected':
+                                    disconnected_players.add(player_name)
                     except (ValueError, IndexError):
                         continue
         
-        return players
+        # Active players = Connected + Reserved
+        active_players = connected_players | reserved_players
+
+        # Disconnected list is historical; if someone appears ONLY in disconnected
+        # and not in connected/reserved, they are already excluded by definition.
+        # This logic ensures we never count purely disconnected players.
+        return active_players
     
     def set_cpu_profile(self, profile: str) -> bool:
         """Set CPU performance profile
@@ -499,21 +514,21 @@ class WindroseMonitor:
         current_players = self.parse_player_list(logs)
         previous_players = set(self.state.get('players', []))
         
-        # Check for new players
+        # Check for new players (log only, no Discord spam)
         new_players = current_players - previous_players
         if new_players:
             for player in new_players:
                 msg = f"🎮 **Player Joined**: {player}"
                 logger.info(msg)
-                self.send_discord_message(msg)
+                # No Discord message here to reduce spam
         
-        # Check for disconnected players
+        # Check for disconnected players (log only, no Discord spam)
         left_players = previous_players - current_players
         if left_players:
             for player in left_players:
                 msg = f"👋 **Player Left**: {player}"
                 logger.info(msg)
-                self.send_discord_message(msg)
+                # No Discord message here to reduce spam
         
         # Update player count
         prev_count = self.state.get('player_count', 0)
@@ -522,6 +537,7 @@ class WindroseMonitor:
         if current_count != prev_count:
             status_msg = f"📊 **Player Count**: {current_count} (was {prev_count})"
             logger.info(status_msg)
+            # Only player count changes go to Discord
             self.send_discord_message(status_msg)
         
         # Update state
