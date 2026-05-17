@@ -282,8 +282,7 @@ class WindroseMonitor:
                     socket_url,
                     timeout=15,
                     origin="https://panel.thedicecube.co.uk",
-                    header=[f"Authorization: Bearer {token}"],
-                    subprotocols=['pterodactyl']
+                    header=[f"Authorization: Bearer {token}"]
                 )
 
                 # Authenticate
