@@ -281,10 +281,8 @@ class WindroseMonitor:
                 ws = websocket.create_connection(
                     socket_url,
                     timeout=15,
-                    header=[
-                            f"Authorization: Bearer {token}",
-                            "Origin: https://panel.thedicecube.co.uk"
-                    ],
+                    origin="https://panel.thedicecube.co.uk",
+                    header=[f"Authorization: Bearer {token}"],
                     subprotocols=['pterodactyl']
                 )
 
