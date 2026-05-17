@@ -15,7 +15,7 @@ WorkingDirectory=/var/lib/windrose-monitor
 # Load environment variables
 EnvironmentFile=/etc/windrose-monitor/.env
 
-# Allow direct CPU scaling (no sudo required)
+# Allow direct CPU scaling
 ReadWritePaths=/sys/devices/system/cpu
 
 # Restart behaviour
@@ -23,9 +23,9 @@ Restart=on-failure
 RestartSec=10
 SyslogIdentifier=windrose-monitor
 
-# File logging (matches Python logger)
-StandardOutput=append:/var/log/windrose-monitor/windrose-monitor.log
-StandardError=append:/var/log/windrose-monitor/windrose-monitor.log
+# File logging
+StandardOutput=append:journal
+StandardError=append:journal
 
 # Security Hardening
 NoNewPrivileges=no

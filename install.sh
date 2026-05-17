@@ -79,8 +79,14 @@ mkdir -p /var/lib/windrose-monitor
 mkdir -p /etc/windrose-monitor
 mkdir -p /var/log/windrose-monitor
 
-chown windrose-monitor:windrose-monitor /var/lib/windrose-monitor
+# State directory
+chown -R windrose-monitor:windrose-monitor /var/lib/windrose-monitor
 chmod 750 /var/lib/windrose-monitor
+
+# Log directory
+chown -R windrose-monitor:windrose-monitor /var/log/windrose-monitor
+chmod 750 /var/log/windrose-monitor
+
 
 echo "  ✓ Directories created and configured"
 echo ""
