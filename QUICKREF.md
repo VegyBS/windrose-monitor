@@ -8,34 +8,34 @@ Use this when you need answers quickly without reading full documentation.
 ## 1. Essential Commands 🧩
 
 ### Start the service
-sudo systemctl start windrose-monitor
+`sudo systemctl start windrose-monitor`
 
 ### Stop the service
-sudo systemctl stop windrose-monitor
+`sudo systemctl stop windrose-monitor`
 
 ### Restart the service
-sudo systemctl restart windrose-monitor
+`sudo systemctl restart windrose-monitor`
 
 ### Enable on boot
-sudo systemctl enable windrose-monitor
+`sudo systemctl enable windrose-monitor`
 
 ### Check status
-sudo systemctl status windrose-monitor
+`sudo systemctl status windrose-monitor`
 
 ### View logs (live)
-sudo journalctl -u windrose-monitor -f
+`sudo journalctl -u windrose-monitor -f`
 
 ### View state file
-sudo cat /var/lib/windrose-monitor/state.json
+`sudo cat /var/lib/windrose-monitor/state.json`
 
 ---
 
 ## 2. Installation Summary 🛠️
 
 ### Clone and install
-git clone https://github.com/yourusername/windrose-monitor.git
-cd windrose-monitor
-sudo bash install.sh
+`git clone https://github.com/yourusername/windrose-monitor.git`
+`cd windrose-monitor`
+`sudo bash install.sh`
 
 Installer creates:
 
@@ -52,20 +52,20 @@ Installer creates:
 
 ### Main configuration (.env)
 Location:
-/etc/windrose-monitor/.env
+`/etc/windrose-monitor/.env`
 
 Required values:
 
-PTERODACTYL_API_URL=...
-PTERODACTYL_API_TOKEN=...
-PTERODACTYL_SERVER_ID=...
-DISCORD_WEBHOOK_URL=...
-CHECK_INTERVAL_SECONDS=20
-CPU_PROFILE_ENABLED=true
+`PTERODACTYL_API_URL=...`
+`PTERODACTYL_API_TOKEN=...`
+`PTERODACTYL_SERVER_ID=...`
+`DISCORD_WEBHOOK_URL=...`
+`CHECK_INTERVAL_SECONDS=20`
+`CPU_PROFILE_ENABLED=true`
 
 ### Optional fallback (config.json)
 Location:
-/etc/windrose-monitor/config.json
+`/etc/windrose-monitor/config.json`
 
 Precedence order:
 
@@ -123,28 +123,28 @@ Use LF line endings in your editor.
 
 From the repo directory:
 
-git pull
-sudo systemctl restart windrose-monitor
+`git pull`
+`sudo systemctl restart windrose-monitor`
 
 If dependencies changed:
 
-sudo bash install.sh
+`sudo bash install.sh`
 
 ---
 
 ## 7. Useful Paths 📁
 
 Monitor install directory:
-/var/lib/windrose-monitor
+`/var/lib/windrose-monitor`
 
 Configuration:
-/etc/windrose-monitor
+`/etc/windrose-monitor`
 
 Logs:
-/var/log/windrose-monitor
+`/var/log/windrose-monitor`
 
 Systemd unit:
-/etc/systemd/system/windrose-monitor.service
+`/etc/systemd/system/windrose-monitor.service`
 
 ---
 
@@ -152,7 +152,7 @@ Systemd unit:
 
 Run all tests:
 
-python -m unittest discover -s . -p 'test_*.py' -v
+`python -m unittest discover -s . -p 'test_*.py' -v`
 
 Covers:
 
