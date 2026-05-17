@@ -15,6 +15,7 @@ WorkingDirectory=/var/lib/windrose-monitor
 # Load environment variables
 EnvironmentFile=/etc/windrose-monitor/.env
 
+# Allow direct CPU scaling (no sudo required)
 ReadWritePaths=/sys/devices/system/cpu
 
 # Restart behaviour
@@ -22,11 +23,11 @@ Restart=on-failure
 RestartSec=10
 SyslogIdentifier=windrose-monitor
 
-# --- File Logging ---
+# File logging (matches Python logger)
 StandardOutput=append:/var/log/windrose-monitor/windrose-monitor.log
 StandardError=append:/var/log/windrose-monitor/windrose-monitor.log
 
-# --- Security Hardening ---
+# Security Hardening
 NoNewPrivileges=no
 PrivateTmp=true
 PrivateDevices=true
@@ -43,6 +44,9 @@ LockPersonality=true
 MemoryDenyWriteExecute=true
 CapabilityBoundingSet=
 SystemCallFilter=@system-service
+
+# Start the monitor using the venv
+ExecStart=/var/lib/windrose-monitor/venv/bin/python /var/lib/windrose-monitor/windrose-monitor.py
 
 [Install]
 WantedBy=multi-user.target
