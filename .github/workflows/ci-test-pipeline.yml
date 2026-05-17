@@ -42,12 +42,12 @@ jobs:
       - name: Lint critical errors
         run: |
           # Fail on syntax errors and undefined names
-          flake8 windrose_monitor_patched.py test_windrose_monitor_pytest.py --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 windrose_monitor.py test_windrose_monitor.py --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Check Python syntax
         run: |
-          python -m py_compile windrose_monitor_patched.py || (echo "Syntax error in monitor" && exit 1)
-          python -m py_compile test_windrose_monitor_pytest.py || (echo "Syntax error in tests" && exit 1)
+          python -m py_compile windrose_monitor.py || (echo "Syntax error in monitor" && exit 1)
+          python -m py_compile test_windrose_monitor.py || (echo "Syntax error in tests" && exit 1)
           echo "✓ Syntax OK"
 
   test:
