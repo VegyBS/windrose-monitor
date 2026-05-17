@@ -29,32 +29,33 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Create log directory if it doesn't exist
+# Ensure log directory exists
 log_dir = Path('/var/log/windrose-monitor')
 log_dir.mkdir(parents=True, exist_ok=True)
 
-# Configure logging with timestamps
+log_file = log_dir / 'windrose-monitor.log'
 log_format = '%(asctime)s - %(levelname)s - %(message)s'
-log_file = '/var/log/windrose-monitor/windrose-monitor.log'
+date_format = '%Y-%m-%d %H:%M:%S'
 
-# Set up file handler with rotation
-file_handler = logging.handlers.RotatingFileHandler(
-    log_file,
-    maxBytes=10485760,  # 10MB
-    backupCount=5
-)
-file_handler.setFormatter(logging.Formatter(log_format, datefmt='%Y-%m-%d %H:%M:%S'))
-
-# Set up console handler
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter(log_format, datefmt='%Y-%m-%d %H:%M:%S'))
-
-# Configure logging
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("windrose-monitor")
 logger.setLevel(logging.INFO)
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
 
+# Only add handlers once
+if not logger.handlers:
+    # Rotating file handler
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file,
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=5
+    )
+    file_handler.setFormatter(logging.Formatter(log_format, datefmt=date_format))
+
+    # Console handler (goes to systemd)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter(log_format, datefmt=date_format))
+
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
 
 class WindroseMonitor:
     def __init__(self, config_path: str = '/etc/windrose-monitor/config.json'):
@@ -85,10 +86,10 @@ class WindroseMonitor:
                 logger.info("WebSocket listener thread already running; not starting another")
         else:
             logger.warning("websocket-client library not available; WebSocket log streaming disabled")
-        
+
     def _load_config(self, config_path: str) -> Dict:
         """Load configuration from environment variables or JSON file
-        
+
         Priority:
         1. Environment variables (.env file)
         2. config.json file (fallback)
@@ -121,7 +122,7 @@ class WindroseMonitor:
             'state_file': os.getenv('STATE_FILE', '/var/lib/windrose-monitor/state.json'),
             'log_file': os.getenv('LOG_FILE', '/var/log/windrose-monitor/windrose-monitor.log')
         }
-        
+
         # If env vars not fully populated, try loading from config file as fallback
         if not config['pterodactyl']['api_token'] and Path(config_path).exists():
             try:
@@ -133,7 +134,7 @@ class WindroseMonitor:
                             config[section] = file_config[section]
             except json.JSONDecodeError as e:
                 logger.warning(f"Invalid JSON in config file: {e}")
-        
+
         # Validate required fields
         if not config['pterodactyl']['api_token']:
             logger.error("Pterodactyl API token not configured (set PTERODACTYL_API_TOKEN env var or in config.json)")
@@ -144,9 +145,9 @@ class WindroseMonitor:
         if not config['discord']['webhook_url']:
             logger.error("Discord webhook URL not configured (set DISCORD_WEBHOOK_URL env var or in config.json)")
             sys.exit(1)
-        
+
         return config
-    
+
     def _load_state(self) -> Dict:
         """Load state from JSON file"""
         state_file = Path(self.config.get('state_file', '/var/lib/windrose-monitor/state.json'))
@@ -159,7 +160,7 @@ class WindroseMonitor:
                 state = {}
         else:
             state = {}
-        
+
         # Defaults
         state.setdefault('players', [])
         state.setdefault('player_count', 0)
@@ -169,7 +170,7 @@ class WindroseMonitor:
         state.setdefault('balanced_counter', 0)
 
         return state
-    
+
     def _save_state(self):
         """Save state to JSON file"""
         state_file = Path(self.config.get('state_file', '/var/lib/windrose-monitor/state.json'))
@@ -182,12 +183,16 @@ class WindroseMonitor:
         msg = f"⚠️ **WebSocket Disconnected** — {reason}"
         logger.warning(msg)
         # Intentionally NOT sending to Discord to avoid spam
-    
+
     def get_server_logs(self) -> Optional[str]:
         """Fetch server logs.
 
         Prefer the live WebSocket buffer; fall back to the HTTP logs endpoint if empty.
         """
+
+        # Determine if this is the WebSocket thread
+        is_ws_thread = threading.current_thread().name != "MainThread"
+
         # If websocket is enabled, prefer websocket buffer and do not call legacy /logs endpoint.
         if websocket is not None:
             with self._ws_lock:
@@ -200,7 +205,10 @@ class WindroseMonitor:
                 logger.warning("WebSocket token unavailable — ensure PTERODACTYL_API_TOKEN is a Client API token with websocket.connect permission")
                 return None
 
-            logger.info("WebSocket token obtained; waiting for live console output to populate buffer")
+            # Only log this from the WebSocket thread
+            if is_ws_thread:
+                logger.info("WebSocket token obtained; waiting for live console output to populate buffer")
+
             return None
 
         # Fallback: HTTP logs endpoint (legacy)
@@ -218,33 +226,58 @@ class WindroseMonitor:
 
     def _get_websocket_token(self) -> Optional[dict]:
         """Request a temporary websocket token and socket URL from the Panel."""
+
+        # Only the WebSocket listener thread should log token events
+        is_ws_thread = threading.current_thread().name != "MainThread"
+
         try:
-            if self._ws_token_data and self._ws_token_expiry and time.time() < (self._ws_token_expiry - 30):
+            # Use cached token if still valid
+            if (
+                self._ws_token_data
+                and self._ws_token_expiry
+                and time.time() < (self._ws_token_expiry - 30)
+            ):
                 return self._ws_token_data
 
-            url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/websocket"
-            resp = self.api_session.get(url, timeout=10, headers={
-                'Accept': 'Application/vnd.pterodactyl.v1+json'
-            })
+            url = (
+                f"{self.config['pterodactyl']['api_url']}/api/client/servers/"
+                f"{self.config['pterodactyl']['server_id']}/websocket"
+            )
+
+            resp = self.api_session.get(
+                url,
+                timeout=10,
+                headers={"Accept": "Application/vnd.pterodactyl.v1+json"},
+            )
             resp.raise_for_status()
-            data = resp.json().get('data')
+            data = resp.json().get("data")
 
-            if data and isinstance(data, dict):
-                logger.info(f"Obtained websocket token, socket URL: {data.get('socket')}")
+            # Log only from WebSocket thread
+            if is_ws_thread and data and isinstance(data, dict):
+                logger.info(
+                    f"Obtained websocket token, socket URL: {data.get('socket')}"
+                )
 
-            token = data.get('token') if data else None
+            token = data.get("token") if data else None
             if token:
                 try:
-                    parts = token.split('.')
+                    parts = token.split(".")
                     if len(parts) >= 2:
                         payload = parts[1]
-                        padding = '=' * ((4 - len(payload) % 4) % 4)
+                        padding = "=" * ((4 - len(payload) % 4) % 4)
                         decoded = base64.urlsafe_b64decode(payload + padding)
                         payload_json = json.loads(decoded)
-                        exp = int(payload_json.get('exp', 0))
+                        exp = int(payload_json.get("exp", 0))
+
                         self._ws_token_expiry = exp
                         self._ws_token_data = data
-                        logger.info(f"WebSocket token expires at {datetime.fromtimestamp(self._ws_token_expiry)}")
+
+                        if is_ws_thread:
+                            logger.info(
+                                f"WebSocket token expires at "
+                                f"{datetime.fromtimestamp(self._ws_token_expiry)}"
+                            )
+
                 except Exception:
                     self._ws_token_data = data
                     self._ws_token_expiry = 0
@@ -252,7 +285,8 @@ class WindroseMonitor:
             return data
 
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Could not obtain websocket token: {e}", exc_info=True)
+            if is_ws_thread:
+                logger.warning(f"Could not obtain websocket token: {e}", exc_info=True)
             return None
 
     def _ws_listener(self):
@@ -370,14 +404,14 @@ class WindroseMonitor:
                 logger.info(f"Backoff now {backoff} seconds")
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 300)
-    
+
     def parse_player_list(self, logs: str) -> Set[str]:
         """Parse player list from logs
-        
+
         Players are in BOTH Connected Accounts and Reserved Accounts sections.
         Disconnected Accounts are used to indicate players that have left and
         should not be counted if they are no longer in Connected/Reserved.
-        
+
         Returns unique set of currently active players.
         """
         connected_players: Set[str] = set()
@@ -386,7 +420,7 @@ class WindroseMonitor:
 
         lines = logs.split('\n')
         current_section = None
-        
+
         for line in lines:
             # Section detection
             if 'Connected Accounts' in line:
@@ -398,7 +432,7 @@ class WindroseMonitor:
             elif 'Disconnected Accounts' in line:
                 current_section = 'disconnected'
                 continue
-            
+
             # Only parse lines inside known sections
             if current_section in ['connected', 'reserved', 'disconnected']:
                 if "Name '" in line:
@@ -416,7 +450,7 @@ class WindroseMonitor:
                                     disconnected_players.add(player_name)
                     except (ValueError, IndexError):
                         continue
-        
+
         # Active players = Connected + Reserved
         active_players = connected_players | reserved_players
 
@@ -424,23 +458,23 @@ class WindroseMonitor:
         # and not in connected/reserved, they are already excluded by definition.
         # This logic ensures we never count purely disconnected players.
         return active_players
-    
+
     def set_cpu_profile(self, profile: str) -> bool:
         """Set CPU performance profile
-        
+
         Args:
             profile: 'performance' or 'balance_power'
-        
+
         Returns:
             True if successful
         """
         if not self.config['cpu_profile']['enabled']:
             return True
-        
+
         try:
             # Get all CPU cores
             cpu_path_template = self.config['cpu_profile']['cpu_freq_path'].replace('cpu0', 'cpu{}')
-            
+
             # Find all available CPUs
             sys_cpu_path = '/sys/devices/system/cpu'
             cpu_count = 0
@@ -451,7 +485,7 @@ class WindroseMonitor:
                 except ValueError:
                     continue
                 cpu_count += 1
-            
+
             # Write profile to each CPU
             success = True
             for i in range(cpu_count):
@@ -462,7 +496,7 @@ class WindroseMonitor:
                 except Exception as e:
                     logger.warning(f"Failed to set CPU {i} to {profile}: {e}")
                     success = False
-            
+
             if success:
                 logger.info(f"CPU profile set to: {profile}")
                 self.state['cpu_profile'] = profile
@@ -470,13 +504,13 @@ class WindroseMonitor:
         except Exception as e:
             logger.error(f"Error changing CPU profile: {e}", exc_info=True)
             return False
-    
+
     def send_discord_message(self, message: str) -> bool:
         """Send message to Discord webhook
-        
+
         Args:
             message: Message to send
-        
+
         Returns:
             True if successful
         """
@@ -487,28 +521,28 @@ class WindroseMonitor:
                 'username': 'Windrose Server Monitor',
                 'avatar_url': 'https://via.placeholder.com/32'
             }
-            
+
             response = requests.post(webhook_url, json=payload, timeout=10)
             response.raise_for_status()
             return True
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to send Discord message: {e}", exc_info=True)
             return False
-    
+
     def check_and_update(self):
         """Check for player changes and update state"""
         logger.info("Checking server status...")
-        
+
         # Fetch logs
         logs = self.get_server_logs()
         if not logs:
             logger.warning("Could not fetch server logs")
             return
-        
+
         # Parse current players
         current_players = self.parse_player_list(logs)
         previous_players = set(self.state.get('players', []))
-        
+
         # Check for new players
         new_players = current_players - previous_players
         if new_players:
@@ -516,7 +550,7 @@ class WindroseMonitor:
                 msg = f"🎮 **Player Joined**: {player}"
                 logger.info(msg)
                 self.send_discord_message(msg)
-        
+
         # Check for disconnected players
         left_players = previous_players - current_players
         if left_players:
@@ -524,21 +558,21 @@ class WindroseMonitor:
                 msg = f"👋 **Player Left**: {player}"
                 logger.info(msg)
                 self.send_discord_message(msg)
-        
+
         # Update player count
         prev_count = self.state.get('player_count', 0)
         current_count = len(current_players)
-        
+
         if current_count != prev_count:
             status_msg = f"📊 **Player Count**: {current_count} (was {prev_count})"
             logger.info(status_msg)
             self.send_discord_message(status_msg)
-        
+
         # Update state
         self.state['players'] = list(current_players)
         self.state['player_count'] = current_count
         self.state['last_update'] = datetime.now().isoformat()
-        
+
         # CPU profile hysteresis
         if current_count > 0:
             self.state['performance_counter'] = self.state.get('performance_counter', 0) + 1
@@ -554,21 +588,21 @@ class WindroseMonitor:
             if self.state['balanced_counter'] >= 3 and self.state.get('cpu_profile') != 'balanced':
                 logger.info("Hysteresis: no players for 3 checks, switching to balanced CPU profile")
                 self.set_cpu_profile(self.config['cpu_profile']['balanced_profile'])
-        
+
         # Save state
         self._save_state()
-    
+
     def run(self):
         """Main monitoring loop"""
         logger.info("Starting Windrose Server Monitor")
-        
+
         try:
             while True:
                 try:
                     self.check_and_update()
                 except Exception as e:
                     logger.error(f"Error during check: {e}", exc_info=True)
-                
+
                 time.sleep(self.config['monitoring']['check_interval_seconds'])
         except KeyboardInterrupt:
             logger.info("Monitoring stopped by user")

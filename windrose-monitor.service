@@ -48,7 +48,7 @@ SystemCallFilter=@system-service
 
 
 # Start the monitor using the venv
-ExecStart=/var/lib/windrose-monitor/venv/bin/python /var/lib/windrose-monitor/windrose-monitor.py
+ExecStart=/var/lib/windrose-monitor/venv/bin/python /var/lib/windrose-monitor/run-application.py
 
 [Install]
 WantedBy=multi-user.target
