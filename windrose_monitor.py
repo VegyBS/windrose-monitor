@@ -406,14 +406,6 @@ class WindroseMonitor:
                 backoff = min(backoff * 2, 300)
 
     def parse_player_list(self, logs: str) -> Set[str]:
-        """Parse player list from logs
-
-        Players are in BOTH Connected Accounts and Reserved Accounts sections.
-        Disconnected Accounts are used to indicate players that have left and
-        should not be counted if they are no longer in Connected/Reserved.
-
-        Returns unique set of currently active players.
-        """
         connected_players: Set[str] = set()
         reserved_players: Set[str] = set()
         disconnected_players: Set[str] = set()
@@ -422,18 +414,19 @@ class WindroseMonitor:
         current_section = None
 
         for line in lines:
-            # Section detection
             if 'Connected Accounts' in line:
+                connected_players.clear()
                 current_section = 'connected'
                 continue
             elif 'Reserved Accounts' in line:
+                reserved_players.clear()
                 current_section = 'reserved'
                 continue
             elif 'Disconnected Accounts' in line:
+                disconnected_players.clear()
                 current_section = 'disconnected'
                 continue
 
-            # Only parse lines inside known sections
             if current_section in ['connected', 'reserved', 'disconnected']:
                 if "Name '" in line:
                     try:
@@ -448,15 +441,10 @@ class WindroseMonitor:
                                     reserved_players.add(player_name)
                                 elif current_section == 'disconnected':
                                     disconnected_players.add(player_name)
-                    except (ValueError, IndexError):
+                    except Exception:
                         continue
 
-        # Active players = Connected + Reserved
         active_players = connected_players | reserved_players
-
-        # Disconnected list is historical; if someone appears ONLY in disconnected
-        # and not in connected/reserved, they are already excluded by definition.
-        # This logic ensures we never count purely disconnected players.
         return active_players
 
     def set_cpu_profile(self, profile: str) -> bool:
