@@ -10,7 +10,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # --- Root check --------------------------------------------------------------
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo "❌ This script must be run with sudo"
     exit 1
 fi
@@ -180,10 +180,6 @@ else
     echo "❌ windrose-monitor.service not found in $SCRIPT_DIR; please add the service file to the repo."
     exit 1
 fi
-
-# Patch ExecStart to use the correct venv + relocated script
-sed -i "s|ExecStart=.*|ExecStart=/var/lib/windrose-monitor/venv/bin/python /var/lib/windrose-monitor/windrose-monitor.py|" \
-    /etc/systemd/system/windrose-monitor.service
 
 systemctl daemon-reload
 systemctl enable windrose-monitor
