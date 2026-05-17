@@ -1,242 +1,188 @@
-# Windrose Monitor - Quick Reference
+# Windrose Monitor Quick Reference Guide ⚡📘
 
-## Common Tasks
+A fast, at‑a‑glance reference for installing, running, and maintaining the Windrose Server Monitor.
+Use this when you need answers quickly without reading full documentation.
 
-### Configuration Management
+---
 
-```bash
-# Edit environment variables (.env) - **Recommended**
-sudo nano /etc/windrose-monitor/.env
+## 1. Essential Commands 🧩
 
-# Edit JSON configuration (fallback)
-sudo nano /etc/windrose-monitor/config.json
-
-# Apply configuration changes (reload and restart)
-sudo systemctl daemon-reload
-sudo systemctl restart windrose-monitor
-
-# View current .env settings
-sudo cat /etc/windrose-monitor/.env
-
-# Validate .env syntax
-grep -E '^[A-Z_]+=' /etc/windrose-monitor/.env
-```
-
-### Viewing Logs
-
-```bash
-# Real-time logs
-sudo journalctl -u windrose-monitor -f
-
-# Last 50 lines
-sudo journalctl -u windrose-monitor -n 50
-
-# Logs from the last hour
-sudo journalctl -u windrose-monitor --since "1 hour ago"
-
-# Specific error level
-sudo journalctl -u windrose-monitor -p err
-```
-
-### Service Management
-
-```bash
-# Start the service
+### Start the service
 sudo systemctl start windrose-monitor
 
-# Stop the service
+### Stop the service
 sudo systemctl stop windrose-monitor
 
-# Restart the service
+### Restart the service
 sudo systemctl restart windrose-monitor
 
-# Check status
-sudo systemctl status windrose-monitor
-
-# Enable on boot (automatic)
+### Enable on boot
 sudo systemctl enable windrose-monitor
 
-# Disable on boot
-sudo systemctl disable windrose-monitor
-```
+### Check status
+sudo systemctl status windrose-monitor
 
-### Configuration
+### View logs (live)
+sudo journalctl -u windrose-monitor -f
 
-```bash
-# Edit configuration
-sudo nano /etc/windrose-monitor/config.json
-
-# Validate JSON
-python3 -m json.tool /etc/windrose-monitor/config.json
-
-# Apply changes (restart service)
-sudo systemctl restart windrose-monitor
-```
-
-### Testing & Debugging
-
-```bash
-# Test configuration
-python3 test_config.py
-
-# Run monitor in foreground (for testing)
-sudo python3 windrose_monitor.py
-
-# Manually test Discord webhook
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"content":"Test"}' \
-  YOUR_WEBHOOK_URL
-
-# Check Pterodactyl API
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  https://your-panel.com/api/client/servers/SERVER_ID/logs
-```
-
-### State & Monitoring
-
-```bash
-# View current state
+### View state file
 sudo cat /var/lib/windrose-monitor/state.json
 
-# View CPU profiles
-cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference
+---
 
-# Manually set CPU to performance
-echo "performance" | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference
+## 2. Installation Summary 🛠️
 
-# Check sudoers configuration
-sudo cat /etc/sudoers.d/windrose-monitor
-```
+### Clone and install
+git clone https://github.com/yourusername/windrose-monitor.git
+cd windrose-monitor
+sudo bash install.sh
 
-### Troubleshooting
+Installer creates:
 
-```bash
-# Check file permissions
-ls -la /var/lib/windrose-monitor/
-ls -la /etc/windrose-monitor/
+- windrose-monitor user
+- /var/lib/windrose-monitor
+- /etc/windrose-monitor
+- /var/log/windrose-monitor
+- Python virtual environment
+- systemd service
 
-# Check service user
-id windrose-monitor
+---
 
-# Check Python installation
-python3 --version
-pip3 list | grep requests
+## 3. Configuration Files 🔧
 
-# Check API connectivity
-ping your-pterodactyl-panel.com
+### Main configuration (.env)
+Location:
+/etc/windrose-monitor/.env
 
-# Check Discord webhook URL
-echo $WEBHOOK_URL  # if you saved it as env var
-```
+Required values:
 
-### Updating
+PTERODACTYL_API_URL=...
+PTERODACTYL_API_TOKEN=...
+PTERODACTYL_SERVER_ID=...
+DISCORD_WEBHOOK_URL=...
+CHECK_INTERVAL_SECONDS=20
+CPU_PROFILE_ENABLED=true
 
-```bash
-# Stop service
-sudo systemctl stop windrose-monitor
+### Optional fallback (config.json)
+Location:
+/etc/windrose-monitor/config.json
 
-# Update files
-git pull  # or manually copy updated files
+Precedence order:
 
-# Update dependencies
-sudo pip3 install -r requirements.txt --upgrade
+1. .env
+2. config.json
+3. defaults
 
-# Restart
-sudo systemctl start windrose-monitor
+---
 
-# Verify
-sudo systemctl status windrose-monitor
-```
+## 4. What the Monitor Does 🎮
 
-## Configuration Keys
+### Player tracking
+- Reads Connected, Reserved, Disconnected sections
+- Detects joins and leaves
+- Updates state.json
 
-### Pterodactyl Settings
-- `api_url`: Your Pterodactyl panel URL (https://panel.example.com)
-- `api_token`: API token from panel settings
-- `server_id`: Server UUID from panel
+### CPU scaling
+- Players online → performance mode
+- No players → balanced mode
 
-### Discord Settings
-- `webhook_url`: Discord channel webhook URL
+### Discord notifications
+- Join
+- Leave
+- Player count changes
 
-### Monitoring Settings
-- `check_interval_seconds`: How often to check for changes (default: 20)
-- `reserved_accounts_header`: Log line marker for player list (usually "Reserved Accounts")
+### WebSocket behaviour
+- Authenticates
+- Streams console output
+- Reconnects automatically
+- Handles token expiry
 
-### CPU Profile Settings
-- `enabled`: true/false to enable CPU profile switching
-- `performance_profile`: Profile name when players online (usually "performance")
-- `balanced_profile`: Profile name when idle (usually "balance_power")
-- `cpu_freq_path`: Path to CPU frequency scaling (leave default unless custom)
+---
 
-## Directory Structure
+## 5. Troubleshooting 🧹
 
-```
-/opt/windrose-monitor/          # Installation directory
-├── windrose_monitor.py          # Main script
-├── config.json                  # Configuration template
-├── requirements.txt             # Python dependencies
-├── windrose-monitor.service     # Systemd service
-├── install.sh                   # Installation script
-├── test_config.py               # Configuration tester
-├── README.md                    # Main documentation
-├── SETUP.md                     # Detailed setup guide
-└── QUICKREF.md                  # This file
+### No Discord messages
+Check DISCORD_WEBHOOK_URL.
 
-/etc/windrose-monitor/           # Configuration (runtime)
-└── config.json                  # Your actual configuration
+### CPU profile not changing
+Ensure systemd unit includes:
+ReadWritePaths=/sys/devices/system/cpu
 
-/var/lib/windrose-monitor/       # State (runtime)
-└── state.json                   # Current player state
+### WebSocket not connecting
+Verify:
+- API URL
+- API token
+- Server ID
 
-/var/log/                        # Logs (if not using journald)
-└── windrose-monitor.log
+### ^M characters in files
+Use LF line endings in your editor.
 
-/etc/systemd/system/             # Service files
-└── windrose-monitor.service
-```
+---
 
-## Performance Tuning
+## 6. Updating the Monitor 🔁
 
-### Lower CPU Usage
-- Increase `check_interval_seconds` to 30 or 60
+From the repo directory:
 
-### Faster Detection
-- Decrease `check_interval_seconds` to 10
+git pull
+sudo systemctl restart windrose-monitor
 
-### Reduce Disk I/O
-- Save config.json and state.json to RAM disk:
-  ```bash
-  sudo mount -t tmpfs -o size=10M tmpfs /var/lib/windrose-monitor
-  ```
+If dependencies changed:
 
-## Integration with Other Tools
+sudo bash install.sh
 
-### Prometheus Monitoring
-Add this to export player count:
-```python
-# In a separate script with prometheus_client
-from prometheus_client import Gauge
-players = Gauge('windrose_players', 'Current player count')
-# Update gauge on each check
-```
+---
 
-### Grafana Dashboard
-Create dashboard showing:
-- Player count over time
-- Join/leave events timeline
-- CPU profile changes
-- Error rate
+## 7. Useful Paths 📁
 
-### Alerting
-Combine with AlertManager to alert on:
-- Service down (no updates in 5 minutes)
-- High error rate
-- Server crashes (player count spike)
+Monitor install directory:
+/var/lib/windrose-monitor
 
-## Security Notes
+Configuration:
+/etc/windrose-monitor
 
-- Keep API token and webhook URL private
-- Don't commit config.json to version control
-- Use strong file permissions (config.json is 600)
-- Monitor sudoers changes
-- Consider using secrets management (Vault, SecretsManager)
+Logs:
+/var/log/windrose-monitor
+
+Systemd unit:
+/etc/systemd/system/windrose-monitor.service
+
+---
+
+## 8. Test Suite 🧪
+
+Run all tests:
+
+python -m unittest discover -s . -p 'test_*.py' -v
+
+Covers:
+
+- Player parsing
+- Join/leave detection
+- WebSocket behaviour
+- CPU scaling
+- Config precedence
+- Discord formatting
+
+---
+
+## 9. Quick Checklist ✔️
+
+- .env configured
+- systemd service enabled
+- WebSocket authenticates
+- Discord messages working
+- CPU scaling toggles correctly
+- state.json updates
+- Logs show no repeated errors
+
+---
+
+## 10. Need More Detail? 📘
+
+See:
+
+- SETUP.md for installation
+- TESTING.md for full test coverage
+- README.md for complete documentation
+
+This QuickRef is designed for fast lookup during development, debugging, or deployment.

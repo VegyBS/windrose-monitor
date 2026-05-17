@@ -1,295 +1,214 @@
-# Testing Guide
+# Windrose Monitor Testing Guide 🧪🔍
 
-This document explains how to run tests locally and understand the testing strategy.
+This document describes how to test the Windrose Server Monitor to ensure it behaves correctly, handles WebSocket events reliably, and responds safely to real‑world conditions such as disconnects, token expiry, and CPU profile changes.
 
-## Overview
+The tests are designed to run on the Linux host where the monitor is installed, but many can also be executed from a development machine.
 
-The Windrose Monitor uses **unit tests with mocked APIs** to ensure code quality without requiring actual Discord or Pterodactyl credentials during testing.
+---
 
-**Why mocking?**
-- ✅ Tests run fast and don't depend on external services
-- ✅ No need for test Discord servers or Pterodactyl instances
-- ✅ Tests are deterministic and reproducible
-- ✅ Safe to run in CI/CD pipelines (GitHub Actions)
-- ✅ Standard industry practice
+## 1. Overview of Test Coverage 📋
 
-## Running Tests Locally
+The test suite covers the following areas:
 
-### Prerequisites
+- Player list parsing
+- Join and leave detection
+- WebSocket connection and reconnection logic
+- Token refresh behaviour
+- CPU profile switching
+- Discord message formatting
+- Configuration precedence
+- State file handling
+- Error handling and resilience
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
-```
+These tests help ensure the monitor behaves consistently even under unstable network or panel conditions.
 
-### Configuration Validation
+---
 
-The `test_config.py` script has two modes:
+## 2. Running the Test Suite ▶️
 
-#### Local Mode (Default)
-Tests real API connectivity. Use this before deploying:
+From the project directory:
 
-```bash
-# Run in local mode - tests real APIs
-python test_config.py
-```
-
-This validates:
-- ✓ Pterodactyl API connectivity
-- ✓ Discord webhook works
-- ✓ CPU frequency scaling available
-- ✓ File permissions
-
-#### CI Mode (GitHub Actions)
-Validates configuration structure without real API calls:
-
-```bash
-# Run in CI mode - uses mocked APIs
-CI=true python test_config.py
-```
-
-This validates:
-- ✓ Configuration format/structure
-- ✓ Required fields present
-- ✓ Token format valid
-- ✓ No external API calls (faster, safer in CI)
-
-### Run All Tests
-
-```bash
-# Run all unit tests with verbose output
 python -m unittest discover -s . -p 'test_*.py' -v
-```
 
-### Run Specific Test Class
+This command will:
 
-```bash
-# Test only player parsing logic
-python -m unittest test_windrose_monitor.TestPlayerListParsing -v
+- Discover all test files matching test_*.py
+- Run them in verbose mode
+- Display pass, fail, and error output
 
-# Test only player state detection
-python -m unittest test_windrose_monitor.TestPlayerStateDetection -v
+If the monitor is installed system‑wide, you can still run tests from the cloned repository.
 
-# Test only CPU profile logic
-python -m unittest test_windrose_monitor.TestCPUProfileLogic -v
-```
+---
 
-### Run Individual Tests
+## 3. Unit Tests Included 🧩
 
-```bash
-# Test a specific test method
-python -m unittest test_windrose_monitor.TestPlayerListParsing.test_parse_players_with_reserved_accounts -v
-```
+### 3.1 Player Parsing Tests
 
-## Test Coverage
+These tests verify that the monitor correctly extracts:
 
-### Core Logic Tested
+- Connected Accounts
+- Reserved Accounts
+- Disconnected Accounts
 
-#### 1. **Log Parsing** (`TestPlayerListParsing`)
-- ✅ Parsing players from Reserved Accounts section
-- ✅ Handling empty player lists
-- ✅ Parsing multiple players correctly
-- ✅ Ignoring log timestamps and other data
+They also validate:
 
-**What this tests:** The heart of the monitoring—correctly identifying who's online from server logs
+- Active player calculation
+- Transition from active to inactive
+- Handling of empty or malformed sections
 
-#### 2. **Player State Detection** (`TestPlayerStateDetection`)
-- ✅ Detecting new players joining
-- ✅ Detecting players leaving
-- ✅ No false positives when list unchanged
-- ✅ Complete player turnover scenarios
+---
 
-**What this tests:** Proper join/leave detection logic
+### 3.2 Join and Leave Detection
 
-#### 3. **CPU Profile Logic** (`TestCPUProfileLogic`)
-- ✅ Switching to performance when players join
-- ✅ Switching to balanced when players leave
-- ✅ Not switching unnecessarily (optimization)
+Tests simulate:
 
-**What this tests:** CPU profile switching decisions are correct
+- A player joining
+- A player leaving
+- Multiple players joining or leaving
+- Rapid join‑leave sequences
+- Duplicate entries
 
-#### 4. **Configuration** (`TestConfigValidation`)
-- ✅ Config file structure validation
-- ✅ config.example.json is valid JSON
-- ✅ All required keys present
+The monitor must update state.json correctly and avoid false positives.
 
-**What this tests:** Configuration integrity
+---
 
-#### 5. **Discord Messages** (`TestDiscordMessageFormat`)
-- ✅ Player joined message format
-- ✅ Player left message format
-- ✅ Player count message format
-- ✅ Emoji and formatting correct
+### 3.3 WebSocket Behaviour
 
-**What this tests:** Discord message formatting is correct
+Tests include:
 
-#### 6. **State Management** (`TestStateManagement`)
-- ✅ Initial state structure
-- ✅ State updates with new players
-- ✅ Timestamp tracking
+- Successful authentication
+- Token expiry
+- Unexpected disconnects
+- Reconnect attempts
+- Exponential backoff
+- Handling of malformed messages
 
-**What this tests:** State persistence logic
+These tests ensure the monitor stays connected even when Wings is unstable.
 
-## GitHub Actions Workflow
+---
 
-The `.github/workflows/tests.yml` file automatically runs tests on:
-- Every push to `main` or `develop` branches
-- Every pull request to `main`
+### 3.4 CPU Profile Switching
 
-### What the workflow does:
+Tests verify:
 
-1. **Tests Python 3.7-3.11** - Ensures compatibility with multiple Python versions
-2. **Validates JSON/Config** - Checks config.example.json and .env.example are valid
-3. **Syntax checks** - Verifies all Python files compile
-4. **Linting** - Checks code style with flake8
-5. **Runs test_config.py in CI mode** - Validates configuration without external API calls
+- Switching to performance mode when players join
+- Switching to balanced mode when the server empties
+- Writing to the correct sysfs paths
+- Handling missing or read‑only sysfs entries
+- State persistence across restarts
 
-### CI Mode Configuration
+---
 
-The workflow sets environment variables to enable **CI mode**:
+### 3.5 Discord Notification Formatting
 
-```yaml
-env:
-  CI: 'true'  # Enables mocked API mode in test_config.py
-  PTERODACTYL_API_URL: 'https://example-pterodactyl.com'
-  PTERODACTYL_API_TOKEN: 'test-token-12345'
-  PTERODACTYL_SERVER_ID: 'test-server-uuid'
-  DISCORD_WEBHOOK_URL: 'https://discord.com/api/webhooks/test/test'
-```
+Tests validate:
 
-When `CI=true`, the test_config.py script:
-- ✅ Skips real API calls (no network requests)
-- ✅ Validates configuration structure only
-- ✅ Runs fast and reliably
-- ✅ Never exposes real credentials
-- ✅ Uses placeholder values for testing
+- Join messages
+- Leave messages
+- Player count updates
+- Error handling when the webhook fails
+- Message throttling if implemented
 
-This means:
-- **No actual API calls to Pterodactyl or Discord during tests**
-- **Tests run in seconds instead of minutes**
-- **GitHub Actions runners can't compromise real credentials**
-- **Tests pass/fail based on code logic, not external services**
+---
 
-### View test results:
+### 3.6 Configuration Precedence
 
-1. Go to your GitHub repository
-2. Click "Actions" tab
-3. Click latest workflow run
-4. Expand test jobs to see details
-5. Look for "Mode: CI/GitHub Actions (mocked APIs)" in test_config.py output
+Tests ensure:
 
-## What's NOT Tested (and why)
+- .env overrides config.json
+- config.json overrides defaults
+- Missing values fall back safely
+- Invalid values produce warnings
 
-### Actual API Calls
-- **Why skip:** Third-party services (Discord, Pterodactyl) are their responsibility to maintain
-- **How to test in CI:** `test_config.py` validates structure without API calls
-- **How to test locally:** Run `python test_config.py` (real mode) on your machine with real credentials
+---
 
-### Network Communication
-- **Why skip:** Network is flaky and slow for CI/CD
-- **How to test:** Verify once locally, trust tests in CI after that
+### 3.7 State File Handling
 
-### systemd Integration
-- **Why skip:** Requires root access in test environment
-- **How to test:** Manual testing during deployment on your Ubuntu server
+Tests cover:
 
-### CPU Frequency Scaling
-- **Why skip:** GitHub Actions runners don't have this hardware
-- **How to test:** Manual testing on your actual Ubuntu server
+- Creating state.json if missing
+- Updating state.json safely
+- Handling corrupted state files
+- Ensuring atomic writes where possible
 
-## Manual Integration Testing
+---
 
-Before deploying to production, manually test with real APIs:
+## 4. Manual Testing 🧪🖐️
 
-```bash
-# On your Ubuntu server
-python test_config.py
+In addition to automated tests, you can manually verify behaviour.
 
-# This validates:
-# ✓ Pterodactyl API connectivity
-# ✓ Discord webhook works
-# ✓ CPU frequency scaling available
-# ✓ File permissions correct
-```
+### 4.1 Simulate a Player Join
 
-## Adding New Tests
+Start your Windrose server and join it.
+Check:
 
-When you add new features, add corresponding tests:
+- Discord receives a join message
+- CPU profile switches to performance
+- state.json updates
 
-1. **Identify testable logic** - What can you test without external services?
-2. **Create test cases** - Add to `test_windrose_monitor.py`
-3. **Use mocks** - Mock any external calls
-4. **Test edge cases** - Empty lists, null values, errors
+### 4.2 Simulate a Player Leave
 
-Example:
+Leave the server.
+Check:
 
-```python
-class TestNewFeature(unittest.TestCase):
-    def test_new_feature_basic(self):
-        # Arrange
-        input_data = {...}
-        
-        # Act
-        result = some_function(input_data)
-        
-        # Assert
-        self.assertEqual(result, expected)
-```
+- Discord receives a leave message
+- CPU profile switches to balanced
+- state.json updates
 
-## Continuous Improvement
+### 4.3 Restart the Monitor
 
-- Tests catch bugs early
-- Tests document expected behavior
-- Tests prevent regressions
-- Tests make refactoring safer
+sudo systemctl restart windrose-monitor
 
-## Troubleshooting
+Verify:
 
-### Tests fail locally but pass in GitHub Actions
-- Check Python version matches: `python --version`
-- Ensure all dependencies installed: `pip install -r requirements.txt`
-- Clear Python cache: `find . -type d -name __pycache__ -exec rm -rf {} +`
+- WebSocket reconnects
+- State persists
+- No duplicate notifications
 
-### Test import errors
-```bash
-# Make sure you're in the project root
-cd /path/to/windrose-monitor
+### 4.4 Break the WebSocket Connection
 
-# Run tests from correct directory
-python -m unittest discover
-```
+Disable your network temporarily or restart Wings.
+The monitor should:
 
-### Flake8 linting fails
-```bash
-# Install flake8
-pip install flake8
+- Detect the disconnect
+- Attempt reconnection
+- Resume normal operation
 
-# See specific issues
-flake8 windrose_monitor.py
+---
 
-# Fix common issues automatically (requires autopep8)
-pip install autopep8
-autopep8 --in-place windrose_monitor.py
-```
+## 5. Log Inspection 📜
 
-## CI/CD Best Practices
+To observe behaviour in real time:
 
-✅ **Do:**
-- Test logic, not external services
-- Keep tests fast (< 1 second each)
-- Mock all external dependencies
-- Test edge cases and errors
-- Update tests when code changes
+sudo journalctl -u windrose-monitor -f
 
-❌ **Don't:**
-- Make real API calls in tests
-- Write tests that depend on network
-- Commit hardcoded secrets in tests
-- Skip testing "because it's tested in production"
-- Ignore failing tests
+Look for:
 
-## Resources
+- WebSocket events
+- Reconnect attempts
+- Player detection
+- CPU profile changes
+- Errors or warnings
 
-- [Python unittest documentation](https://docs.python.org/3/library/unittest.html)
-- [unittest.mock documentation](https://docs.python.org/3/library/unittest.mock.html)
-- [GitHub Actions documentation](https://docs.github.com/en/actions)
+---
+
+## 6. Troubleshooting 🛠️
+
+### WebSocket fails to authenticate
+Check PTERODACTYL_API_TOKEN and PTERODACTYL_SERVER_ID.
+
+### CPU profile does not change
+Ensure the systemd unit includes ReadWritePaths for sysfs.
+
+### Discord messages not sent
+Verify DISCORD_WEBHOOK_URL and network connectivity.
+
+### Tests fail due to CRLF
+Ensure your editor uses LF line endings.
+
+---
+
+## 7. Conclusion 🎉
+
+The Windrose Server Monitor includes a comprehensive test suite that validates its behaviour under real‑world conditions.
+Running these tests regularly helps ensure reliability, especially when updating the monitor or modifying its logic.
