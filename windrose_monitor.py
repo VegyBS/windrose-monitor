@@ -457,15 +457,10 @@ class WindroseMonitor:
             for i in range(cpu_count):
                 cpu_freq_path = cpu_path_template.format(i)
                 try:
-                    # Use echo with sudo to write to the file
-                    cmd = f"echo '{profile}' | sudo tee {cpu_freq_path} > /dev/null"
-                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                    
-                    if result.returncode != 0:
-                        logger.warning(f"Failed to set CPU {i} to {profile}: {result.stderr}")
-                        success = False
+                    with open(cpu_freq_path, "w") as f:
+                        f.write(profile)
                 except Exception as e:
-                    logger.warning(f"Error setting CPU {i} profile: {e}")
+                    logger.warning(f"Failed to set CPU {i} to {profile}: {e}")
                     success = False
             
             if success:
@@ -514,21 +509,21 @@ class WindroseMonitor:
         current_players = self.parse_player_list(logs)
         previous_players = set(self.state.get('players', []))
         
-        # Check for new players (log only, no Discord spam)
+        # Check for new players
         new_players = current_players - previous_players
         if new_players:
             for player in new_players:
                 msg = f"🎮 **Player Joined**: {player}"
                 logger.info(msg)
-                # No Discord message here to reduce spam
+                self.send_discord_message(msg)
         
-        # Check for disconnected players (log only, no Discord spam)
+        # Check for disconnected players
         left_players = previous_players - current_players
         if left_players:
             for player in left_players:
                 msg = f"👋 **Player Left**: {player}"
                 logger.info(msg)
-                # No Discord message here to reduce spam
+                self.send_discord_message(msg)
         
         # Update player count
         prev_count = self.state.get('player_count', 0)
@@ -537,7 +532,6 @@ class WindroseMonitor:
         if current_count != prev_count:
             status_msg = f"📊 **Player Count**: {current_count} (was {prev_count})"
             logger.info(status_msg)
-            # Only player count changes go to Discord
             self.send_discord_message(status_msg)
         
         # Update state

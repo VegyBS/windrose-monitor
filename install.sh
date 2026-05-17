@@ -172,22 +172,6 @@ else
 fi
 echo ""
 
-# --- Sudoers for CPU scaling --------------------------------------------------
-echo "Configuring sudo permissions for CPU frequency scaling..."
-SUDOERS_FILE="/etc/sudoers.d/windrose-monitor"
-
-if [ -f "$SUDOERS_FILE" ]; then
-    echo "  ℹ Sudoers file already exists"
-else
-    cat > "$SUDOERS_FILE" << 'SUDO_EOF'
-# Allow windrose-monitor to change CPU frequency without password
-windrose-monitor ALL=(ALL) NOPASSWD: /usr/bin/tee
-SUDO_EOF
-    chmod 440 "$SUDOERS_FILE"
-    echo "  ✓ Sudoers file created"
-fi
-echo ""
-
 # --- Install systemd service --------------------------------------------------
 echo "Installing systemd service..."
 if [ -f "$SCRIPT_DIR/windrose-monitor.service" ]; then

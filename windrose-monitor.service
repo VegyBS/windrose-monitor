@@ -15,8 +15,7 @@ WorkingDirectory=/var/lib/windrose-monitor
 # Load environment variables
 EnvironmentFile=/etc/windrose-monitor/.env
 
-# Use the venv Python and the relocated script
-ExecStart=/var/lib/windrose-monitor/venv/bin/python /var/lib/windrose-monitor/windrose-monitor.py
+ReadWritePaths=/sys/devices/system/cpu
 
 # Restart behaviour
 Restart=on-failure
