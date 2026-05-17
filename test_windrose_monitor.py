@@ -3,7 +3,7 @@ import json
 import pytest
 from pathlib import Path
 from datetime import datetime
-from windrose_monitor_patched import WindroseMonitor
+from windrose_monitor import WindroseMonitor
 
 # Sample snapshots used across tests
 SAMPLE_SNAPSHOT_1 = """
