@@ -209,7 +209,7 @@ Tests cover:
 ---
 
 ## 📁 Directory Layout
-
+```
 /var/lib/windrose-monitor/
   ├── windrose-monitor.py
   ├── venv/
@@ -224,7 +224,7 @@ Tests cover:
 
 /etc/systemd/system/
   └── windrose-monitor.service
-
+```
 ---
 
 ## 📄 License
