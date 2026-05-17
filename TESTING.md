@@ -28,7 +28,7 @@ These tests help ensure the monitor behaves consistently even under unstable net
 
 From the project directory:
 
-python -m unittest discover -s . -p 'test_*.py' -v
+`python -m unittest discover -s . -p 'test_*.py' -v`
 
 This command will:
 
@@ -180,7 +180,7 @@ The monitor should:
 
 To observe behaviour in real time:
 
-sudo journalctl -u windrose-monitor -f
+`sudo journalctl -u windrose-monitor -f`
 
 Look for:
 
@@ -195,13 +195,13 @@ Look for:
 ## 6. Troubleshooting 🛠️
 
 ### WebSocket fails to authenticate
-Check PTERODACTYL_API_TOKEN and PTERODACTYL_SERVER_ID.
+Check `PTERODACTYL_API_TOKEN` and `PTERODACTYL_SERVER_ID`.
 
 ### CPU profile does not change
 Ensure the systemd unit includes ReadWritePaths for sysfs.
 
 ### Discord messages not sent
-Verify DISCORD_WEBHOOK_URL and network connectivity.
+Verify `DISCORD_WEBHOOK_URL` and network connectivity.
 
 ### Tests fail due to CRLF
 Ensure your editor uses LF line endings.
