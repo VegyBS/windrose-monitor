@@ -219,6 +219,7 @@ class WindroseMonitor:
                 backoff = min(backoff * 2, 60)
                 continue
             try:
+                logger.debug(f"Connecting to WebSocket at {socket_url}")
                 ws = websocket.create_connection(
                     socket_url,
                     timeout=15,
