@@ -16,10 +16,16 @@ import sys
 import threading
 import base64
 from collections import deque
+logger = logging.getLogger("windrose-monitor")
+logger.setLevel(logging.DEBUG)
 try:
     import websocket
-except Exception:
+except ImportError:
     websocket = None
+    logger.warning("websocket-client not installed; falling back to HTTP logs")
+except Exception as e:
+    websocket = None
+    logger.exception("Error importing websocket-client; falling back to HTTP logs", exc_info=e)
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
@@ -35,8 +41,6 @@ log_file = log_dir / 'windrose-monitor.log'
 log_format = '%(asctime)s - %(levelname)s - %(message)s'
 date_format = '%Y-%m-%d %H:%M:%S'
 
-logger = logging.getLogger("windrose-monitor")
-logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
     fh.setFormatter(logging.Formatter(log_format, datefmt=date_format))
@@ -93,13 +97,30 @@ class WindroseMonitor:
             'state_file': os.getenv('STATE_FILE', '/var/lib/windrose-monitor/state.json')
         }
 
+        def _merge_dicts(base: dict, override: dict) -> dict:
+            """
+            Recursively merge `override` into `base`.
+
+            - For nested dicts, merge per key.
+            - For non-dict values, `override` wins when it is a "truthy" value.
+              This allows env vars to override file config, while still letting
+              file config fill in missing/empty env values.
+            """
+            for key, override_val in override.items():
+                if isinstance(override_val, dict) and isinstance(base.get(key), dict):
+                    _merge_dicts(base[key], override_val)
+                else:
+                    # Only apply the file value if the current base value is missing/falsey
+                    # so that environment variables still take precedence when set.
+                    if key not in base or not base[key]:
+                        base[key] = override_val
+            return base
+
         if not cfg['pterodactyl']['api_token'] and Path(config_path).exists():
             try:
                 with open(config_path, 'r') as f:
                     file_cfg = json.load(f)
-                    for k, v in file_cfg.items():
-                        if k not in cfg or not cfg[k]:
-                            cfg[k] = v
+                    _merge_dicts(cfg, file_cfg)
             except Exception:
                 logger.warning("Failed to read config file; using environment variables")
 
@@ -146,6 +167,13 @@ class WindroseMonitor:
             logger.debug(f"State saved to {state_file}")
         except Exception as e:
             logger.error(f"Failed to save state atomically: {e}")
+        finally:
+             # Clean up temp file if it still exists (e.g. when write or replace failed)
+             try:
+                 if tmp_file.exists():
+                     os.remove(tmp_file)
+             except Exception as cleanup_err:
+                 logger.debug(f"Failed to remove temporary state file {tmp_file}: {cleanup_err}")
 
     def _alert_ws_dead(self, reason: str):
         logger.warning(f"WebSocket issue: {reason}")
@@ -334,6 +362,7 @@ class WindroseMonitor:
                         else:
                             disconnected[account_id] = (name, state)
                     except Exception:
+                        logger.debug(f"Failed to parse line in section {current_section}: {line}")
                         continue
 
         # Build active map from latest snapshot
@@ -418,6 +447,9 @@ class WindroseMonitor:
                 # persist the counter so it survives restarts and skip this tick
                 self._save_state()
                 return
+            else:
+                logger.warning("Empty snapshot persisted for 2 consecutive ticks; accepting as real")
+                self.state['empty_snapshot_counter'] = 0
         else:
             # reset counter when we see a non-empty snapshot
             if self.state.get('empty_snapshot_counter'):
