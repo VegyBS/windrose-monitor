@@ -177,7 +177,8 @@ class WindroseMonitor:
     def _get_websocket_token(self) -> Optional[dict]:
         # Minimal implementation; keep cached token if valid
         try:
-            if self._ws_token_data and self._ws_token_expiry and time.time() < (self._ws_token_expiry - 30):
+            margin = int(os.getenv('WS_TOKEN_REFRESH_MARGIN', '60'))
+            if self._ws_token_data and self._ws_token_expiry and time.time() < (self._ws_token_expiry - margin):
                 return self._ws_token_data
             url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/websocket"
             resp = self.api_session.get(url, timeout=10, headers={'Accept': 'Application/vnd.pterodactyl.v1+json'})
@@ -218,13 +219,27 @@ class WindroseMonitor:
                 backoff = min(backoff * 2, 60)
                 continue
             try:
-                ws = websocket.create_connection(socket_url, timeout=15, origin=self.config['pterodactyl'].get('websocket_origin', ''), header=[f"Authorization: Bearer {token}"])
+                ws = websocket.create_connection(
+                    socket_url,
+                    timeout=15,
+                    origin=self.config['pterodactyl'].get('websocket_origin', ''),
+                    header=[f"Authorization: Bearer {token}"]
+                )
                 auth_msg = json.dumps({"event": "auth", "args": [token]})
                 ws.send(auth_msg)
                 last_msg = time.time()
                 backoff = 1
                 while not self._ws_stop.is_set():
-                    raw = ws.recv()
+                    # Refresh token slightly early to avoid mid-tick expiry
+                    margin = int(os.getenv('WS_TOKEN_REFRESH_MARGIN', '60'))
+                    if self._ws_token_expiry and time.time() > (self._ws_token_expiry - margin):
+                        logger.info("WebSocket token expiring soon; reconnecting to refresh token")
+                        break
+                    try:
+                        raw = ws.recv()
+                    except Exception as e:
+                        logger.debug(f"WebSocket recv error: {e}")
+                        break
                     if not raw:
                         break
                     last_msg = time.time()
