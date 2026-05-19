@@ -36,7 +36,7 @@ log_format = '%(asctime)s - %(levelname)s - %(message)s'
 date_format = '%Y-%m-%d %H:%M:%S'
 
 logger = logging.getLogger("windrose-monitor")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
     fh.setFormatter(logging.Formatter(log_format, datefmt=date_format))
@@ -285,6 +285,7 @@ class WindroseMonitor:
         if last_idx == -1:
             last_idx = logs.rfind('Disconnected Accounts')
         if last_idx == -1:
+            logger.debug("No player list sections found in logs")
             return {}, False
 
         sublogs = logs[last_idx:]
