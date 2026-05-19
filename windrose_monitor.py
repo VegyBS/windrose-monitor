@@ -127,13 +127,25 @@ class WindroseMonitor:
         state.setdefault('performance_counter', 0)
         state.setdefault('balanced_counter', 0)
         state.setdefault('last_update', None)
+        # Counter to tolerate a single transient empty snapshot
+        state.setdefault('empty_snapshot_counter', 0)
+        logger.debug(f"Loaded state from {state_file}: players={len(state.get('players', []))} last_update={state.get('last_update')}")
         return state
 
     def _save_state(self):
         state_file = Path(self.config.get('state_file', '/var/lib/windrose-monitor/state.json'))
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(state_file, 'w') as f:
-            json.dump(self.state, f, indent=2)
+        tmp_file = state_file.with_suffix('.tmp')
+        try:
+            # Write to a temp file and atomically replace the real state file to avoid truncation/corruption
+            with open(tmp_file, 'w') as f:
+                json.dump(self.state, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, state_file)
+            logger.debug(f"State saved to {state_file}")
+        except Exception as e:
+            logger.error(f"Failed to save state atomically: {e}")
 
     def _alert_ws_dead(self, reason: str):
         logger.warning(f"WebSocket issue: {reason}")
@@ -247,13 +259,27 @@ class WindroseMonitor:
         - When 'Connected Accounts' header appears we clear previous snapshot data.
         - Active players = Connected U Reserved, excluding entries with state 'SaidFarewell'.
         """
+        # To avoid mixing multiple snapshots, parse only from the most recent section header
+        if not logs:
+            return {}, False
+        # Prefer the last 'Connected Accounts' header as the start of the latest snapshot.
+        # Fall back to 'Reserved' or 'Disconnected' if no Connected header is present.
+        last_idx = logs.rfind('Connected Accounts')
+        if last_idx == -1:
+            last_idx = logs.rfind('Reserved Accounts')
+        if last_idx == -1:
+            last_idx = logs.rfind('Disconnected Accounts')
+        if last_idx == -1:
+            return {}, False
+
+        sublogs = logs[last_idx:]
         connected: Dict[str, Tuple[str, str]] = {}
         reserved: Dict[str, Tuple[str, str]] = {}
         disconnected: Dict[str, Tuple[str, str]] = {}
         current_section: Optional[str] = None
         found_any_section = False
 
-        for line in logs.splitlines():
+        for line in sublogs.splitlines():
             if 'Connected Accounts' in line:
                 connected.clear(); reserved.clear(); disconnected.clear()
                 current_section = 'connected'; found_any_section = True; continue
@@ -365,6 +391,20 @@ class WindroseMonitor:
         prev_meta = self.state.get('players_meta', {})
 
         curr_players = set(current_map.keys())
+
+        # Tolerate a single transient empty snapshot to avoid false "all left" events
+        if len(curr_players) == 0 and len(prev_players) > 0:
+            cnt = self.state.get('empty_snapshot_counter', 0) + 1
+            self.state['empty_snapshot_counter'] = cnt
+            if cnt < 2:
+                logger.warning(f"Transient empty snapshot detected (count={cnt}); deferring leave notification")
+                # persist the counter so it survives restarts and skip this tick
+                self._save_state()
+                return
+        else:
+            # reset counter when we see a non-empty snapshot
+            if self.state.get('empty_snapshot_counter'):
+                self.state['empty_snapshot_counter'] = 0
 
         new_players = curr_players - prev_players
         left_players = prev_players - curr_players
