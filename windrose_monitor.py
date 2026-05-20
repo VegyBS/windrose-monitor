@@ -16,9 +16,13 @@ import sys
 import threading
 import base64
 from collections import deque
+
+logger = logging.getLogger("windrose-monitor")
+logger.setLevel(logging.DEBUG)
 try:
     import websocket
 except Exception:
+    logger.warning("websocket-client library not available; WebSocket log monitoring disabled")
     websocket = None
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,8 +39,6 @@ log_file = log_dir / 'windrose-monitor.log'
 log_format = '%(asctime)s - %(levelname)s - %(message)s'
 date_format = '%Y-%m-%d %H:%M:%S'
 
-logger = logging.getLogger("windrose-monitor")
-logger.setLevel(logging.INFO)
 if not logger.handlers:
     fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
     fh.setFormatter(logging.Formatter(log_format, datefmt=date_format))
