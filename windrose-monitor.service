@@ -5,7 +5,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 User=windrose-monitor
 Group=windrose-monitor
 
@@ -23,9 +23,13 @@ Restart=on-failure
 RestartSec=10
 SyslogIdentifier=windrose-monitor
 
+# Systemd notifications
+NotifyAccess=main
+WatchdogSec=60
+
 # File logging
-StandardOutput=append:journal
-StandardError=append:journal
+StandardOutput=journal
+StandardError=journal
 
 # Security Hardening
 NoNewPrivileges=no
@@ -45,7 +49,6 @@ MemoryDenyWriteExecute=true
 CapabilityBoundingSet=CAP_SYS_ADMIN
 AmbientCapabilities=CAP_SYS_ADMIN
 SystemCallFilter=@system-service
-
 
 # Start the monitor using the venv
 ExecStart=/var/lib/windrose-monitor/venv/bin/python /var/lib/windrose-monitor/windrose-monitor.py
