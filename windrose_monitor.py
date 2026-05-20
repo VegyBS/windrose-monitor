@@ -16,16 +16,10 @@ import sys
 import threading
 import base64
 from collections import deque
-logger = logging.getLogger("windrose-monitor")
-logger.setLevel(logging.DEBUG)
 try:
     import websocket
-except ImportError:
+except Exception:
     websocket = None
-    logger.warning("websocket-client not installed; falling back to HTTP logs")
-except Exception as e:
-    websocket = None
-    logger.exception("Error importing websocket-client; falling back to HTTP logs", exc_info=e)
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
@@ -41,6 +35,8 @@ log_file = log_dir / 'windrose-monitor.log'
 log_format = '%(asctime)s - %(levelname)s - %(message)s'
 date_format = '%Y-%m-%d %H:%M:%S'
 
+logger = logging.getLogger("windrose-monitor")
+logger.setLevel(logging.INFO)
 if not logger.handlers:
     fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
     fh.setFormatter(logging.Formatter(log_format, datefmt=date_format))
@@ -97,30 +93,13 @@ class WindroseMonitor:
             'state_file': os.getenv('STATE_FILE', '/var/lib/windrose-monitor/state.json')
         }
 
-        def _merge_dicts(base: dict, override: dict) -> dict:
-            """
-            Recursively merge `override` into `base`.
-
-            - For nested dicts, merge per key.
-            - For non-dict values, `override` wins when it is a "truthy" value.
-              This allows env vars to override file config, while still letting
-              file config fill in missing/empty env values.
-            """
-            for key, override_val in override.items():
-                if isinstance(override_val, dict) and isinstance(base.get(key), dict):
-                    _merge_dicts(base[key], override_val)
-                else:
-                    # Only apply the file value if the current base value is missing/falsey
-                    # so that environment variables still take precedence when set.
-                    if key not in base or not base[key]:
-                        base[key] = override_val
-            return base
-
         if not cfg['pterodactyl']['api_token'] and Path(config_path).exists():
             try:
                 with open(config_path, 'r') as f:
                     file_cfg = json.load(f)
-                    _merge_dicts(cfg, file_cfg)
+                    for k, v in file_cfg.items():
+                        if k not in cfg or not cfg[k]:
+                            cfg[k] = v
             except Exception:
                 logger.warning("Failed to read config file; using environment variables")
 
@@ -148,32 +127,13 @@ class WindroseMonitor:
         state.setdefault('performance_counter', 0)
         state.setdefault('balanced_counter', 0)
         state.setdefault('last_update', None)
-        # Counter to tolerate a single transient empty snapshot
-        state.setdefault('empty_snapshot_counter', 0)
-        logger.debug(f"Loaded state from {state_file}: players={len(state.get('players', []))} last_update={state.get('last_update')}")
         return state
 
     def _save_state(self):
         state_file = Path(self.config.get('state_file', '/var/lib/windrose-monitor/state.json'))
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = state_file.with_suffix('.tmp')
-        try:
-            # Write to a temp file and atomically replace the real state file to avoid truncation/corruption
-            with open(tmp_file, 'w') as f:
-                json.dump(self.state, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_file, state_file)
-            logger.debug(f"State saved to {state_file}")
-        except Exception as e:
-            logger.error(f"Failed to save state atomically: {e}")
-        finally:
-             # Clean up temp file if it still exists (e.g. when write or replace failed)
-             try:
-                 if tmp_file.exists():
-                     os.remove(tmp_file)
-             except Exception as cleanup_err:
-                 logger.debug(f"Failed to remove temporary state file {tmp_file}: {cleanup_err}")
+        with open(state_file, 'w') as f:
+            json.dump(self.state, f, indent=2)
 
     def _alert_ws_dead(self, reason: str):
         logger.warning(f"WebSocket issue: {reason}")
@@ -205,8 +165,7 @@ class WindroseMonitor:
     def _get_websocket_token(self) -> Optional[dict]:
         # Minimal implementation; keep cached token if valid
         try:
-            margin = int(os.getenv('WS_TOKEN_REFRESH_MARGIN', '60'))
-            if self._ws_token_data and self._ws_token_expiry and time.time() < (self._ws_token_expiry - margin):
+            if self._ws_token_data and self._ws_token_expiry and time.time() < (self._ws_token_expiry - 30):
                 return self._ws_token_data
             url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/websocket"
             resp = self.api_session.get(url, timeout=10, headers={'Accept': 'Application/vnd.pterodactyl.v1+json'})
@@ -247,28 +206,13 @@ class WindroseMonitor:
                 backoff = min(backoff * 2, 60)
                 continue
             try:
-                logger.debug(f"Connecting to WebSocket at {socket_url}")
-                ws = websocket.create_connection(
-                    socket_url,
-                    timeout=15,
-                    origin=self.config['pterodactyl'].get('websocket_origin', ''),
-                    header=[f"Authorization: Bearer {token}"]
-                )
+                ws = websocket.create_connection(socket_url, timeout=15, origin=self.config['pterodactyl'].get('websocket_origin', ''), header=[f"Authorization: Bearer {token}"])
                 auth_msg = json.dumps({"event": "auth", "args": [token]})
                 ws.send(auth_msg)
                 last_msg = time.time()
                 backoff = 1
                 while not self._ws_stop.is_set():
-                    # Refresh token slightly early to avoid mid-tick expiry
-                    margin = int(os.getenv('WS_TOKEN_REFRESH_MARGIN', '60'))
-                    if self._ws_token_expiry and time.time() > (self._ws_token_expiry - margin):
-                        logger.info("WebSocket token expiring soon; reconnecting to refresh token")
-                        break
-                    try:
-                        raw = ws.recv()
-                    except Exception as e:
-                        logger.debug(f"WebSocket recv error: {e}")
-                        break
+                    raw = ws.recv()
                     if not raw:
                         break
                     last_msg = time.time()
@@ -303,28 +247,13 @@ class WindroseMonitor:
         - When 'Connected Accounts' header appears we clear previous snapshot data.
         - Active players = Connected U Reserved, excluding entries with state 'SaidFarewell'.
         """
-        # To avoid mixing multiple snapshots, parse only from the most recent section header
-        if not logs:
-            return {}, False
-        # Prefer the last 'Connected Accounts' header as the start of the latest snapshot.
-        # Fall back to 'Reserved' or 'Disconnected' if no Connected header is present.
-        last_idx = logs.rfind('Connected Accounts')
-        if last_idx == -1:
-            last_idx = logs.rfind('Reserved Accounts')
-        if last_idx == -1:
-            last_idx = logs.rfind('Disconnected Accounts')
-        if last_idx == -1:
-            logger.debug("No player list sections found in logs")
-            return {}, False
-
-        sublogs = logs[last_idx:]
         connected: Dict[str, Tuple[str, str]] = {}
         reserved: Dict[str, Tuple[str, str]] = {}
         disconnected: Dict[str, Tuple[str, str]] = {}
         current_section: Optional[str] = None
         found_any_section = False
 
-        for line in sublogs.splitlines():
+        for line in logs.splitlines():
             if 'Connected Accounts' in line:
                 connected.clear(); reserved.clear(); disconnected.clear()
                 current_section = 'connected'; found_any_section = True; continue
@@ -362,7 +291,6 @@ class WindroseMonitor:
                         else:
                             disconnected[account_id] = (name, state)
                     except Exception:
-                        logger.debug(f"Failed to parse line in section {current_section}: {line}")
                         continue
 
         # Build active map from latest snapshot
@@ -437,23 +365,6 @@ class WindroseMonitor:
         prev_meta = self.state.get('players_meta', {})
 
         curr_players = set(current_map.keys())
-
-        # Tolerate a single transient empty snapshot to avoid false "all left" events
-        if len(curr_players) == 0 and len(prev_players) > 0:
-            cnt = self.state.get('empty_snapshot_counter', 0) + 1
-            self.state['empty_snapshot_counter'] = cnt
-            if cnt < 2:
-                logger.warning(f"Transient empty snapshot detected (count={cnt}); deferring leave notification")
-                # persist the counter so it survives restarts and skip this tick
-                self._save_state()
-                return
-            else:
-                logger.warning("Empty snapshot persisted for 2 consecutive ticks; accepting as real")
-                self.state['empty_snapshot_counter'] = 0
-        else:
-            # reset counter when we see a non-empty snapshot
-            if self.state.get('empty_snapshot_counter'):
-                self.state['empty_snapshot_counter'] = 0
 
         new_players = curr_players - prev_players
         left_players = prev_players - curr_players
