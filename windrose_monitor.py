@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Windrose Server Monitor Patched
+Windrose Server Monitor with Enhanced Debugging
 - Parser returns found_sections and uses AccountId as canonical id
 - players_meta persisted in state
-- Debug mode and unit test harness included
+- Debug mode with log persistence and snapshots
+- WebSocket health metrics
+- Systemd notification support
 """
 
 import json
@@ -12,20 +14,10 @@ import logging.handlers
 import time
 import requests
 import os
-import sys
 import threading
 import base64
+import socket
 from collections import deque
-logger = logging.getLogger("windrose-monitor")
-logger.setLevel(logging.DEBUG)
-try:
-    import websocket
-except ImportError:
-    websocket = None
-    logger.warning("websocket-client not installed; falling back to HTTP logs")
-except Exception as e:
-    websocket = None
-    logger.exception("Error importing websocket-client; falling back to HTTP logs", exc_info=e)
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Set, Optional, Tuple
@@ -34,194 +26,294 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+try:
+    import websocket
+except ImportError:
+    websocket = None
+except Exception:
+    websocket = None
+
 # Basic logging setup
-log_dir = Path(os.getenv('LOG_DIR', '/var/log/windrose-monitor'))
+logger = logging.getLogger("windrose-monitor")
+logger.setLevel(logging.DEBUG)
+
+log_dir = Path(os.getenv("LOG_DIR", "/var/log/windrose-monitor"))
 log_dir.mkdir(parents=True, exist_ok=True)
-log_file = log_dir / 'windrose-monitor.log'
-log_format = '%(asctime)s - %(levelname)s - %(message)s'
-date_format = '%Y-%m-%d %H:%M:%S'
+log_file = log_dir / "windrose-monitor.log"
+log_format = "%(asctime)s - %(levelname)s - %(message)s"
+date_format = "%Y-%m-%d %H:%M:%S"
 
 if not logger.handlers:
-    fh = logging.handlers.RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
+    fh = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=10 * 1024 * 1024, backupCount=5
+    )
     fh.setFormatter(logging.Formatter(log_format, datefmt=date_format))
     ch = logging.StreamHandler()
     ch.setFormatter(logging.Formatter(log_format, datefmt=date_format))
     logger.addHandler(fh)
     logger.addHandler(ch)
 
+if websocket is None:
+    logger.warning("websocket-client not installed; falling back to HTTP logs")
+
+
 class WindroseMonitor:
-    def __init__(self, config_path: str = '/etc/windrose-monitor/config.json'):
+    """ """
+
+    def __init__(self, config_path: str = "/etc/windrose-monitor/config.json"):
         self.config = self._load_config(config_path)
         self.state = self._load_state()
         self.api_session = requests.Session()
-        token = self.config['pterodactyl']['api_token']
+        token = self.config["pterodactyl"]["api_token"]
         if token:
-            self.api_session.headers.update({'Authorization': f"Bearer {token}"})
-        self._ws_buffer = deque(maxlen=int(os.getenv('WS_BUFFER_LINES', '10000')))
-        self._ws_lock = threading.Lock()
-        self._ws_thread: Optional[threading.Thread] = None
-        self._ws_stop = threading.Event()
-        self._ws_token_data = None
-        self._ws_token_expiry = 0
-        self.debug = os.getenv('DEBUG_MONITOR', 'false').lower() == 'true'
+            self.api_session.headers.update({"Authorization": f"Bearer {token}"})
+            self._ws_buffer = deque(maxlen=int(os.getenv("WS_BUFFER_LINES", "10000")))
+            self._ws_lock = threading.Lock()
+            self._ws_thread: Optional[threading.Thread] = None
+            self._ws_stop = threading.Event()
+            self._ws_token_data = None
+            self._ws_token_expiry = 0
+            self._ws_last_msg_time = 0
+            self.debug = os.getenv("DEBUG_MONITOR", "false").lower() == "true"
+            self._mock_mode = os.getenv("MOCK_API", "false").lower() == "true"
+            # Setup debug logging for raw console output
+            self._debug_enabled = (
+                os.getenv("DEBUG_SAVE_LOGS", "false").lower() == "true"
+            )
+        if self._debug_enabled:
+            debug_log_dir = Path(
+                os.getenv("DEBUG_LOG_DIR", "/var/log/windrose-monitor/debug")
+            )
+            debug_log_dir.mkdir(parents=True, exist_ok=True)
+            self._debug_log_file = debug_log_dir / "raw_console_output.log"
+            self._debug_log_handler = logging.handlers.RotatingFileHandler(
+                self._debug_log_file, maxBytes=50 * 1024 * 1024, backupCount=3
+            )
+            self._debug_log_handler.setFormatter(
+                logging.Formatter("%(asctime)s - %(message)s")
+            )
+            debug_logger = logging.getLogger("windrose-debug")
+            debug_logger.setLevel(logging.DEBUG)
+            debug_logger.addHandler(self._debug_log_handler)
+            self._debug_logger = debug_logger
+            logger.info(f"Debug logging enabled: {self._debug_log_file}")
+        else:
+            self._debug_logger = None
+            # Setup snapshot directory
+            self._snapshots_enabled = (
+                os.getenv("DEBUG_SNAPSHOTS_ENABLED", "false").lower() == "true"
+            )
+        if self._snapshots_enabled:
+            self._snapshot_dir = Path(
+                os.getenv("DEBUG_SNAPSHOTS_DIR", "/var/log/windrose-monitor/snapshots")
+            )
+            self._snapshot_dir.mkdir(parents=True, exist_ok=True)
+            self._snapshot_keep = int(os.getenv("DEBUG_SNAPSHOTS_KEEP", "20"))
+            logger.info(f"Snapshot debugging enabled: {self._snapshot_dir}")
 
-        if websocket is not None:
+        if websocket is not None and not self._mock_mode:
             if self._ws_thread is None or not self._ws_thread.is_alive():
                 logger.info("Starting WebSocket listener thread")
-                self._ws_thread = threading.Thread(target=self._ws_listener, daemon=True)
+                self._ws_thread = threading.Thread(
+                    target=self._ws_listener, daemon=True
+                )
                 self._ws_thread.start()
         else:
-            logger.warning("websocket-client not available; falling back to HTTP logs")
+            if self._mock_mode:
+                logger.info("Running in MOCK_API mode for testing")
+            else:
+                logger.warning(
+                    "websocket-client not available; falling back to HTTP logs"
+                )
+
+            self._notify_systemd("STATUS=Initializing...")
 
     def _load_config(self, config_path: str) -> Dict:
+        """
+        Load configuration from environment with optional override from a JSON file.
+        """
         cfg = {
-            'pterodactyl': {
-                'api_url': os.getenv('PTERODACTYL_API_URL', ''),
-                'api_token': os.getenv('PTERODACTYL_API_TOKEN', ''),
-                'server_id': os.getenv('PTERODACTYL_SERVER_ID', ''),
-                'websocket_origin': os.getenv('PTERODACTYL_WEBSOCKET_ORIGIN', ''),
-                'websocket_host': os.getenv('PTERODACTYL_WEBSOCKET_HOST', '')
+            "pterodactyl": {
+                "api_url": os.getenv("PTERODACTYL_API_URL", ""),
+                "api_token": os.getenv("PTERODACTYL_API_TOKEN", ""),
+                "server_id": os.getenv("PTERODACTYL_SERVER_ID", ""),
+                "websocket_origin": os.getenv("PTERODACTYL_WEBSOCKET_ORIGIN", ""),
+                "websocket_host": os.getenv("PTERODACTYL_WEBSOCKET_HOST", ""),
             },
-            'discord': {
-                'webhook_url': os.getenv('DISCORD_WEBHOOK_URL', '')
+            "discord": {"webhook_url": os.getenv("DISCORD_WEBHOOK_URL", "")},
+            "monitoring": {
+                "check_interval_seconds": int(os.getenv("CHECK_INTERVAL_SECONDS", "20"))
             },
-            'monitoring': {
-                'check_interval_seconds': int(os.getenv('CHECK_INTERVAL_SECONDS', '20'))
-            },
-            'cpu_profile': {
-                'enabled': os.getenv('CPU_PROFILE_ENABLED', 'true').lower() == 'true',
-                'performance_profile': os.getenv('CPU_PROFILE_PERFORMANCE', 'performance'),
-                'balanced_profile': os.getenv('CPU_PROFILE_BALANCED', 'balance_power'),
-                'cpu_freq_path': os.getenv('CPU_FREQ_PATH', '/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference')
-            },
-            'state_file': os.getenv('STATE_FILE', '/var/lib/windrose-monitor/state.json')
+            "state_file": os.getenv(
+                "STATE_FILE", "/var/lib/windrose-monitor/state.json"
+            ),
         }
 
-        def _merge_dicts(base: dict, override: dict) -> dict:
-            """
-            Recursively merge `override` into `base`.
-
-            - For nested dicts, merge per key.
-            - For non-dict values, `override` wins when it is a "truthy" value.
-              This allows env vars to override file config, while still letting
-              file config fill in missing/empty env values.
-            """
-            for key, override_val in override.items():
-                if isinstance(override_val, dict) and isinstance(base.get(key), dict):
-                    _merge_dicts(base[key], override_val)
-                else:
-                    # Only apply the file value if the current base value is missing/falsey
-                    # so that environment variables still take precedence when set.
-                    if key not in base or not base[key]:
-                        base[key] = override_val
-            return base
-
-        if not cfg['pterodactyl']['api_token'] and Path(config_path).exists():
-            try:
-                with open(config_path, 'r') as f:
+        # If the API token is missing, allow reading a config file to fill values
+        try:
+            if not cfg["pterodactyl"]["api_token"] and Path(config_path).exists():
+                with open(config_path, "r") as f:
                     file_cfg = json.load(f)
-                    _merge_dicts(cfg, file_cfg)
-            except Exception:
-                logger.warning("Failed to read config file; using environment variables")
+                    self._merge_dicts(cfg, file_cfg)
+        except Exception:
+            logger.warning("Failed to read config file; using environment variables")
 
-        # Minimal validation
-        if not cfg['discord']['webhook_url']:
+        if not cfg["discord"].get("webhook_url"):
             logger.error("DISCORD_WEBHOOK_URL not configured")
-            # Do not exit; allow tests to run without webhook
+
         return cfg
 
+    def _merge_dicts(self, base: dict, override: dict) -> dict:
+        """
+        Recursively merge override into base. Override values replace base values.
+        """
+        for key, override_val in override.items():
+            if isinstance(override_val, dict) and isinstance(base.get(key), dict):
+                self._merge_dicts(base[key], override_val)
+            else:
+                base[key] = override_val
+        return base
+
     def _load_state(self) -> Dict:
-        state_file = Path(self.config.get('state_file', '/var/lib/windrose-monitor/state.json'))
+        """ """
+        state_file = Path(
+            self.config.get("state_file", "/var/lib/windrose-monitor/state.json")
+        )
         if state_file.exists():
             try:
-                with open(state_file, 'r') as f:
+                with open(state_file, "r") as f:
                     state = json.load(f)
             except Exception:
                 logger.warning("State file invalid; starting fresh")
                 state = {}
         else:
             state = {}
-        state.setdefault('players', [])  # list of AccountIds
-        state.setdefault('players_meta', {})  # { account_id: {name, last_seen, state} }
-        state.setdefault('player_count', 0)
-        state.setdefault('cpu_profile', 'balanced')
-        state.setdefault('performance_counter', 0)
-        state.setdefault('balanced_counter', 0)
-        state.setdefault('last_update', None)
-        # Counter to tolerate a single transient empty snapshot
-        state.setdefault('empty_snapshot_counter', 0)
-        logger.debug(f"Loaded state from {state_file}: players={len(state.get('players', []))} last_update={state.get('last_update')}")
-        return state
+            state.setdefault("players", [])
+            state.setdefault("players_meta", {})
+            state.setdefault("player_count", 0)
+            state.setdefault("last_update", None)
+            state.setdefault("empty_snapshot_counter", 0)
+            logger.debug(
+                f"Loaded state from {state_file}: players={len(state.get('players', []))} last_update={state.get('last_update')}"
+            )
+            return state
 
     def _save_state(self):
-        state_file = Path(self.config.get('state_file', '/var/lib/windrose-monitor/state.json'))
+        """ """
+        state_file = Path(
+            self.config.get("state_file", "/var/lib/windrose-monitor/state.json")
+        )
         state_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp_file = state_file.with_suffix('.tmp')
+        tmp_file = state_file.with_suffix(".tmp")
         try:
-            # Write to a temp file and atomically replace the real state file to avoid truncation/corruption
-            with open(tmp_file, 'w') as f:
+            with open(tmp_file, "w") as f:
                 json.dump(self.state, f, indent=2)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_file, state_file)
-            logger.debug(f"State saved to {state_file}")
+                os.replace(tmp_file, state_file)
+                logger.debug(f"State saved to {state_file}")
         except Exception as e:
             logger.error(f"Failed to save state atomically: {e}")
         finally:
-             # Clean up temp file if it still exists (e.g. when write or replace failed)
-             try:
-                 if tmp_file.exists():
-                     os.remove(tmp_file)
-             except Exception as cleanup_err:
-                 logger.debug(f"Failed to remove temporary state file {tmp_file}: {cleanup_err}")
+            try:
+                if tmp_file.exists():
+                    os.remove(tmp_file)
+            except Exception as cleanup_err:
+                logger.debug(
+                    f"Failed to remove temporary state file {tmp_file}: {cleanup_err}"
+                )
+
+    def _notify_systemd(self, message: str):
+        """Send notification to systemd
+
+        Args:
+          message: str:
+
+        Returns:
+
+        """
+        try:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+            notify_socket = os.getenv("NOTIFY_SOCKET")
+            if notify_socket:
+                sock.sendto(message.encode(), notify_socket)
+                sock.close()
+        except Exception:
+            pass
 
     def _alert_ws_dead(self, reason: str):
+        """
+
+        Args:
+          reason: str:
+
+        Returns:
+
+        """
         logger.warning(f"WebSocket issue: {reason}")
 
     def get_server_logs(self) -> Optional[str]:
-        # Prefer websocket buffer if available
+        """ """
+        if self._mock_mode:
+            return """
+                [2026-05-20 10:30:00] Server Status Update
+                Connected Accounts
+                1. Name 'TestPlayer'. AccountId 'TEST123'. State 'ReadyToPlay'. NetAddress '192.168.1.1'
+                Reserved Accounts
+                Disconnected Accounts
+                """
         if websocket is not None:
             with self._ws_lock:
                 if len(self._ws_buffer) > 0:
                     return "\n".join(list(self._ws_buffer))
-            # If buffer empty, try to validate token and return None to wait for live output
-            token_data = self._get_websocket_token()
-            if not token_data:
-                logger.debug("WebSocket token unavailable")
-                return None
+                token_data = self._get_websocket_token()
+                if not token_data:
+                    logger.debug("WebSocket token unavailable")
+                    return None
             return None
 
-        # Fallback to HTTP logs endpoint
         try:
             url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/logs"
-            resp = self.api_session.get(url, timeout=10, headers={'Accept': 'Application/vnd.pterodactyl.v1+json'})
+            resp = self.api_session.get(
+                url,
+                timeout=10,
+                headers={"Accept": "Application/vnd.pterodactyl.v1+json"},
+            )
             resp.raise_for_status()
             data = resp.json()
-            return data.get('attributes', {}).get('content', '')
+            return data.get("attributes", {}).get("content", "")
         except Exception as e:
             logger.error(f"Failed to fetch logs: {e}")
             return None
 
     def _get_websocket_token(self) -> Optional[dict]:
-        # Minimal implementation; keep cached token if valid
+        """ """
         try:
-            margin = int(os.getenv('WS_TOKEN_REFRESH_MARGIN', '60'))
-            if self._ws_token_data and self._ws_token_expiry and time.time() < (self._ws_token_expiry - margin):
+            margin = int(os.getenv("WS_TOKEN_REFRESH_MARGIN", "60"))
+            if (
+                self._ws_token_data
+                and self._ws_token_expiry
+                and time.time() < (self._ws_token_expiry - margin)
+            ):
                 return self._ws_token_data
             url = f"{self.config['pterodactyl']['api_url']}/api/client/servers/{self.config['pterodactyl']['server_id']}/websocket"
-            resp = self.api_session.get(url, timeout=10, headers={'Accept': 'Application/vnd.pterodactyl.v1+json'})
+            resp = self.api_session.get(
+                url,
+                timeout=10,
+                headers={"Accept": "Application/vnd.pterodactyl.v1+json"},
+            )
             resp.raise_for_status()
-            data = resp.json().get('data')
-            token = data.get('token') if data else None
+            data = resp.json().get("data")
+            token = data.get("token") if data else None
             if token:
                 try:
-                    parts = token.split('.')
+                    parts = token.split(".")
                     if len(parts) >= 2:
                         payload = parts[1]
                         padding = "=" * ((4 - len(payload) % 4) % 4)
                         decoded = base64.urlsafe_b64decode(payload + padding)
                         payload_json = json.loads(decoded)
-                        exp = int(payload_json.get('exp', 0))
+                        exp = int(payload_json.get("exp", 0))
                         self._ws_token_expiry = exp
                         self._ws_token_data = data
                 except Exception:
@@ -230,9 +322,10 @@ class WindroseMonitor:
             return data
         except Exception as e:
             logger.debug(f"Could not obtain websocket token: {e}")
-            return None
+        return None
 
     def _ws_listener(self):
+        """ """
         backoff = 1
         while not self._ws_stop.is_set():
             token_data = self._get_websocket_token()
@@ -240,8 +333,8 @@ class WindroseMonitor:
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 300)
                 continue
-            token = token_data.get('token')
-            socket_url = token_data.get('socket')
+            token = token_data.get("token")
+            socket_url = token_data.get("socket")
             if not token or not socket_url:
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 60)
@@ -251,68 +344,90 @@ class WindroseMonitor:
                 ws = websocket.create_connection(
                     socket_url,
                     timeout=15,
-                    origin=self.config['pterodactyl'].get('websocket_origin', ''),
-                    header=[f"Authorization: Bearer {token}"]
+                    origin=self.config["pterodactyl"].get("websocket_origin", ""),
+                    header=[f"Authorization: Bearer {token}"],
                 )
                 auth_msg = json.dumps({"event": "auth", "args": [token]})
                 ws.send(auth_msg)
                 last_msg = time.time()
+                self._ws_last_msg_time = last_msg
                 backoff = 1
+                last_health_log = time.time()
                 while not self._ws_stop.is_set():
-                    # Refresh token slightly early to avoid mid-tick expiry
-                    margin = int(os.getenv('WS_TOKEN_REFRESH_MARGIN', '60'))
-                    if self._ws_token_expiry and time.time() > (self._ws_token_expiry - margin):
-                        logger.info("WebSocket token expiring soon; reconnecting to refresh token")
-                        break
-                    try:
-                        raw = ws.recv()
-                    except Exception as e:
-                        logger.debug(f"WebSocket recv error: {e}")
-                        break
-                    if not raw:
-                        break
-                    last_msg = time.time()
-                    try:
-                        msg = json.loads(raw)
-                    except Exception:
-                        continue
-                    event = msg.get('event')
-                    args = msg.get('args', [])
-                    if event == 'console output' and args:
-                        line = args[0]
-                        with self._ws_lock:
-                            self._ws_buffer.append(line)
-                    if time.time() - last_msg > 30:
-                        self._alert_ws_dead("stale socket")
+                    margin = int(os.getenv("WS_TOKEN_REFRESH_MARGIN", "60"))
+                    if self._ws_token_expiry and time.time() > (
+                        self._ws_token_expiry - margin
+                    ):
+                        logger.info(
+                            "WebSocket token expiring soon; reconnecting to refresh token"
+                        )
                         break
                 try:
-                    ws.close()
+                    raw = ws.recv()
+                except Exception as e:
+                    logger.debug(f"WebSocket recv error: {e}")
+                with self._ws_lock:
+                    buffer_size = len(self._ws_buffer)
+                    logger.info(
+                        f"WebSocket disconnected after {time.time() - last_msg:.1f}s idle. Buffer size: {buffer_size}"
+                    )
+                    break
+                if not raw:
+                    break
+                last_msg = time.time()
+                self._ws_last_msg_time = last_msg
+                try:
+                    msg = json.loads(raw)
                 except Exception:
-                    pass
+                    continue
+                event = msg.get("event")
+                args = msg.get("args", [])
+                if event == "console output" and args:
+                    line = args[0]
+                    with self._ws_lock:
+                        self._ws_buffer.append(line)
+                    if self._debug_logger:
+                        self._debug_logger.debug(f"WS: {line}")
+                        # Periodic health logging
+                        if time.time() - last_health_log >= 300:  # Every 5 minutes
+                            with self._ws_lock:
+                                buffer_usage = (
+                                    len(self._ws_buffer) / self._ws_buffer.maxlen * 100
+                                )
+                                logger.info(
+                                    f"WebSocket health: buffer {buffer_usage:.1f}% full, last message {time.time() - last_msg:.1f}s ago"
+                                )
+                                last_health_log = time.time()
+                                if time.time() - last_msg > 30:
+                                    self._alert_ws_dead("stale socket")
+                                    break
+                                try:
+                                    ws.close()
+                                except Exception:
+                                    pass
             except Exception as e:
                 logger.debug(f"WebSocket connect error: {e}")
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 300)
 
     def parse_player_list(self, logs: str) -> Tuple[Dict[str, Dict[str, str]], bool]:
-        """
-        Parse the latest snapshot from logs and return:
+        """Parse the latest snapshot from logs and return:
         - active_by_id: { account_id: { 'name': display_name, 'state': state } }
         - found_any_section: bool
-        Rules:
-        - When 'Connected Accounts' header appears we clear previous snapshot data.
-        - Active players = Connected U Reserved, excluding entries with state 'SaidFarewell'.
+
+        Args:
+          logs: str:
+
+        Returns:
+
         """
-        # To avoid mixing multiple snapshots, parse only from the most recent section header
         if not logs:
             return {}, False
-        # Prefer the last 'Connected Accounts' header as the start of the latest snapshot.
-        # Fall back to 'Reserved' or 'Disconnected' if no Connected header is present.
-        last_idx = logs.rfind('Connected Accounts')
+        last_idx = logs.rfind("Connected Accounts")
         if last_idx == -1:
-            last_idx = logs.rfind('Reserved Accounts')
+            last_idx = logs.rfind("Reserved Accounts")
         if last_idx == -1:
-            last_idx = logs.rfind('Disconnected Accounts')
+            last_idx = logs.rfind("Disconnected Accounts")
         if last_idx == -1:
             logger.debug("No player list sections found in logs")
             return {}, False
@@ -325,28 +440,33 @@ class WindroseMonitor:
         found_any_section = False
 
         for line in sublogs.splitlines():
-            if 'Connected Accounts' in line:
-                connected.clear(); reserved.clear(); disconnected.clear()
-                current_section = 'connected'; found_any_section = True; continue
-            if 'Reserved Accounts' in line:
-                current_section = 'reserved'; found_any_section = True; continue
-            if 'Disconnected Accounts' in line:
-                current_section = 'disconnected'; found_any_section = True; continue
+            if "Connected Accounts" in line:
+                connected.clear()
+                reserved.clear()
+                disconnected.clear()
+                current_section = "connected"
+                found_any_section = True
+                continue
+            if "Reserved Accounts" in line:
+                current_section = "reserved"
+                found_any_section = True
+                continue
+            if "Disconnected Accounts" in line:
+                current_section = "disconnected"
+                found_any_section = True
+                continue
 
-            if current_section in ('connected', 'reserved', 'disconnected'):
+            if current_section in ("connected", "reserved", "disconnected"):
                 if "Name '" in line and "AccountId" in line:
                     try:
-                        # Name extraction
                         nstart = line.find("Name '") + len("Name '")
                         nend = line.find("'", nstart)
                         name = line[nstart:nend].strip()
 
-                        # AccountId extraction
                         astart = line.find("AccountId '") + len("AccountId '")
                         aend = line.find("'", astart)
                         account_id = line[astart:aend].strip()
 
-                        # State extraction (optional)
                         state = None
                         s_marker = "State '"
                         sidx = line.find(s_marker)
@@ -355,65 +475,80 @@ class WindroseMonitor:
                             send = line.find("'", sstart)
                             state = line[sstart:send].strip()
 
-                        if current_section == 'connected':
+                        if current_section == "connected":
                             connected[account_id] = (name, state)
-                        elif current_section == 'reserved':
+                        elif current_section == "reserved":
                             reserved[account_id] = (name, state)
                         else:
                             disconnected[account_id] = (name, state)
                     except Exception:
-                        logger.debug(f"Failed to parse line in section {current_section}: {line}")
-                        continue
+                        logger.debug(
+                            f"Failed to parse line in section {current_section}: {line}"
+                        )
+                continue
 
-        # Build active map from latest snapshot
         active_by_id: Dict[str, Dict[str, str]] = {}
         for d in (connected, reserved):
             for aid, (name, state) in d.items():
-                if state and state.lower() == 'saidfarewell':
+                if state and state.lower() == "saidfarewell":
                     continue
-                active_by_id[aid] = {'name': name, 'state': state or ''}
+                active_by_id[aid] = {"name": name, "state": state or ""}
 
-        if self.debug:
-            logger.debug(f"parse_player_list found_any_section={found_any_section} connected={list(connected.keys())} reserved={list(reserved.keys())} disconnected={list(disconnected.keys())}")
+                if self.debug:
+                    logger.debug(
+                        f"parse_player_list found_any_section={found_any_section} connected={list(connected.keys())} reserved={list(reserved.keys())} disconnected={list(disconnected.keys())}"
+                    )
 
         return active_by_id, found_any_section
 
-    def set_cpu_profile(self, profile: str) -> bool:
-        if not self.config['cpu_profile']['enabled']:
-            return True
+    def _save_snapshot(self, logs: str, current_map: Dict, found_sections: bool):
+        """Save parsed player snapshot for debugging
+
+        Args:
+          logs: str:
+          current_map: Dict:
+          found_sections: bool:
+
+        Returns:
+
+        """
+        if not self._snapshots_enabled or not logs:
+            return
         try:
-            cpu_path_template = self.config['cpu_profile']['cpu_freq_path'].replace('cpu0', 'cpu{}')
-            sys_cpu_path = '/sys/devices/system/cpu'
-            cpu_count = 0
-            for cpu_dir in Path(sys_cpu_path).glob('cpu[0-9]*'):
-                try:
-                    int(cpu_dir.name.replace('cpu', ''))
-                    cpu_count += 1
-                except Exception:
-                    continue
-            success = True
-            for i in range(cpu_count):
-                cpu_freq_path = cpu_path_template.format(i)
-                try:
-                    with open(cpu_freq_path, "w") as f:
-                        f.write(profile)
-                except Exception as e:
-                    logger.warning(f"Failed to set CPU {i} to {profile}: {e}")
-                    success = False
-            if success:
-                self.state['cpu_profile'] = profile
-            return success
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            snapshot_file = self._snapshot_dir / f"snapshot_{timestamp}.json"
+            snapshot_data = {
+                "timestamp": timestamp,
+                "found_sections": found_sections,
+                "current_map": current_map,
+                "player_count": len(current_map),
+                "raw_logs_excerpt": logs[-2000:] if len(logs) > 2000 else logs,
+            }
+            with open(snapshot_file, "w") as f:
+                json.dump(snapshot_data, f, indent=2)
+                # Keep only last N snapshots
+                snapshots = sorted(self._snapshot_dir.glob("snapshot_*.json"))
+            for old_snap in snapshots[: -self._snapshot_keep]:
+                old_snap.unlink()
+                logger.debug(f"Saved snapshot: {snapshot_file}")
         except Exception as e:
-            logger.error(f"Error changing CPU profile: {e}")
-            return False
+            logger.warning(f"Failed to save debug snapshot: {e}")
 
     def send_discord_message(self, message: str) -> bool:
-        webhook = self.config['discord'].get('webhook_url')
+        """
+
+        Args:
+          message: str:
+
+        Returns:
+
+        """
+        webhook = self.config["discord"].get("webhook_url")
         if not webhook:
             logger.debug(f"Discord webhook not configured; would send: {message}")
             return False
         try:
-            payload = {'content': message, 'username': 'Windrose Server Monitor'}
+            payload = {"content": message, "username": "Windrose Server Monitor"}
             resp = requests.post(webhook, json=payload, timeout=10)
             resp.raise_for_status()
             return True
@@ -422,6 +557,7 @@ class WindroseMonitor:
             return False
 
     def check_and_update(self):
+        """ """
         logger.info("Checking server status")
         logs = self.get_server_logs()
         if not logs:
@@ -429,110 +565,106 @@ class WindroseMonitor:
             return
 
         current_map, found_sections = self.parse_player_list(logs)
+        # Save snapshot for debugging
+        self._save_snapshot(logs, current_map, found_sections)
         if not found_sections:
             logger.info("No player-list snapshot found in logs; skipping tick")
             return
 
-        prev_players = set(self.state.get('players', []))
-        prev_meta = self.state.get('players_meta', {})
-
+        prev_players = set(self.state.get("players", []))
+        prev_meta = self.state.get("players_meta", {})
         curr_players = set(current_map.keys())
 
-        # Tolerate a single transient empty snapshot to avoid false "all left" events
+        # Tolerate transient empty snapshots
         if len(curr_players) == 0 and len(prev_players) > 0:
-            cnt = self.state.get('empty_snapshot_counter', 0) + 1
-            self.state['empty_snapshot_counter'] = cnt
+            cnt = self.state.get("empty_snapshot_counter", 0) + 1
+            self.state["empty_snapshot_counter"] = cnt
             if cnt < 2:
-                logger.warning(f"Transient empty snapshot detected (count={cnt}); deferring leave notification")
-                # persist the counter so it survives restarts and skip this tick
+                logger.warning(
+                    f"Transient empty snapshot detected (count={cnt}); deferring leave notification"
+                )
                 self._save_state()
                 return
             else:
-                logger.warning("Empty snapshot persisted for 2 consecutive ticks; accepting as real")
-                self.state['empty_snapshot_counter'] = 0
+                logger.warning(
+                    "Empty snapshot persisted for 2 consecutive ticks; accepting as real"
+                )
+                self.state["empty_snapshot_counter"] = 0
         else:
-            # reset counter when we see a non-empty snapshot
-            if self.state.get('empty_snapshot_counter'):
-                self.state['empty_snapshot_counter'] = 0
+            if self.state.get("empty_snapshot_counter"):
+                self.state["empty_snapshot_counter"] = 0
 
-        new_players = curr_players - prev_players
-        left_players = prev_players - curr_players
+                new_players = curr_players - prev_players
+                left_players = prev_players - curr_players
 
-        # Build messages in order: joins -> leaves -> count
-        messages: List[str] = []
-        for aid in sorted(new_players):
-            display = current_map[aid]['name']
-            messages.append(f"🎮 **Player Joined**: {display}")
+                messages: List[str] = []
+                for aid in sorted(new_players):
+                    display = current_map[aid]["name"]
+                    messages.append(f"🎮 **Player Joined**: {display}")
 
-        for aid in sorted(left_players):
-            display = prev_meta.get(aid, {}).get('name', 'Unknown')
-            messages.append(f"👋 **Player Left**: {display}")
+                for aid in sorted(left_players):
+                    display = prev_meta.get(aid, {}).get("name", "Unknown")
+                    messages.append(f"👋 **Player Left**: {display}")
 
-        prev_count = self.state.get('player_count', 0)
-        current_count = len(curr_players)
-        if current_count != prev_count:
-            messages.append(f"📊 **Player Count**: {current_count} (was {prev_count})")
+                prev_count = self.state.get("player_count", 0)
+                current_count = len(curr_players)
+                if current_count != prev_count:
+                    messages.append(
+                        f"📊 **Player Count**: {current_count} (was {prev_count})"
+                    )
 
-        # Debug logging of before/after
         if self.debug:
             logger.debug(f"previous_players={sorted(prev_players)}")
             logger.debug(f"current_players={sorted(curr_players)}")
-            logger.debug(f"new_players={sorted(new_players)} left_players={sorted(left_players)}")
+            logger.debug(
+                f"new_players={sorted(new_players)} left_players={sorted(left_players)}"
+            )
 
-        # Send messages in strict order
         for msg in messages:
             self.send_discord_message(msg)
-            # small sleep to preserve ordering on remote webhook
             time.sleep(0.15)
 
-        # Update players_meta and state
-        now = datetime.now(timezone.utc).isoformat()
-        self.state['players'] = list(curr_players)
-        for aid, info in current_map.items():
-            self.state['players_meta'][aid] = {
-                'name': info['name'],
-                'state': info.get('state', ''),
-                'last_seen': now
-            }
-        # Remove metadata for players that left (optional: keep history)
-        for aid in list(prev_meta.keys()):
-            if aid not in curr_players:
-                # keep historical meta but mark last_seen if desired
-                self.state['players_meta'][aid].setdefault('last_left', now)
+            now = datetime.now(timezone.utc).isoformat()
+            self.state["players"] = list(curr_players)
+            for aid, info in current_map.items():
+                self.state["players_meta"][aid] = {
+                    "name": info["name"],
+                    "state": info.get("state", ""),
+                    "last_seen": now,
+                }
+            for aid in list(prev_meta.keys()):
+                if aid not in curr_players:
+                    self.state["players_meta"][aid].setdefault("last_left", now)
 
-        self.state['player_count'] = current_count
-        self.state['last_update'] = now
-
-        # CPU hysteresis
-        if current_count > 0:
-            self.state['performance_counter'] = self.state.get('performance_counter', 0) + 1
-            self.state['balanced_counter'] = 0
-            if self.state['performance_counter'] >= 2 and self.state.get('cpu_profile') != 'performance':
-                logger.info("Switching to performance CPU profile")
-                self.set_cpu_profile(self.config['cpu_profile']['performance_profile'])
-        else:
-            self.state['balanced_counter'] = self.state.get('balanced_counter', 0) + 1
-            self.state['performance_counter'] = 0
-            if self.state['balanced_counter'] >= 3 and self.state.get('cpu_profile') != 'balanced':
-                logger.info("Switching to balanced CPU profile")
-                self.set_cpu_profile(self.config['cpu_profile']['balanced_profile'])
+        self.state["player_count"] = current_count
+        self.state["last_update"] = now
 
         self._save_state()
 
     def run(self):
+        """ """
         logger.info("Starting monitor loop")
+        self._notify_systemd("READY=1\nSTATUS=Monitor active, tracking players...")
         try:
             while True:
                 try:
                     self.check_and_update()
+                    # Update systemd status
+                    status_msg = f"STATUS=Active | Players: {self.state.get('player_count', 0)}"
+                    self._notify_systemd(status_msg)
+                    self._notify_systemd("WATCHDOG=1")
                 except Exception as e:
                     logger.error(f"Error in check_and_update: {e}", exc_info=True)
-                time.sleep(self.config['monitoring']['check_interval_seconds'])
+                    self._notify_systemd(f"STATUS=Error in last cycle: {str(e)[:50]}")
+                    time.sleep(self.config["monitoring"]["check_interval_seconds"])
         except KeyboardInterrupt:
             logger.info("Stopping monitor")
+            self._notify_systemd("STOPPING=1")
             self._ws_stop.set()
 
-# If run as script, start monitor
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     monitor = WindroseMonitor()
     monitor.run()
+
+

@@ -61,7 +61,6 @@ Required values:
 `PTERODACTYL_SERVER_ID=...`
 `DISCORD_WEBHOOK_URL=...`
 `CHECK_INTERVAL_SECONDS=20`
-`CPU_PROFILE_ENABLED=true`
 
 ### Optional fallback (config.json)
 Location:
@@ -82,10 +81,6 @@ Precedence order:
 - Detects joins and leaves
 - Updates state.json
 
-### CPU scaling
-- Players online → performance mode
-- No players → balanced mode
-
 ### Discord notifications
 - Join
 - Leave
@@ -103,10 +98,6 @@ Precedence order:
 
 ### No Discord messages
 Check DISCORD_WEBHOOK_URL.
-
-### CPU profile not changing
-Ensure systemd unit includes:
-ReadWritePaths=/sys/devices/system/cpu
 
 ### WebSocket not connecting
 Verify:
@@ -159,7 +150,6 @@ Covers:
 - Player parsing
 - Join/leave detection
 - WebSocket behaviour
-- CPU scaling
 - Config precedence
 - Discord formatting
 
@@ -171,7 +161,6 @@ Covers:
 - systemd service enabled
 - WebSocket authenticates
 - Discord messages working
-- CPU scaling toggles correctly
 - state.json updates
 - Logs show no repeated errors
 

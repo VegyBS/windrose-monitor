@@ -35,7 +35,6 @@ body:
       description: What does this affect?
       options:
         - label: Player monitoring
-        - label: CPU profile management
         - label: Discord notifications
         - label: Configuration
         - label: Documentation
