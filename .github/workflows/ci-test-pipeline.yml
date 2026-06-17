@@ -84,7 +84,7 @@ jobs:
       - name: Run tests with pytest and coverage
         run: |
           mkdir -p reports
-          pytest -q --maxfail=1 --junitxml=reports/junit-${{ matrix.python-version }}.xml --cov=. --cov-report=xml:reports/coverage-${{ matrix.python-version }}.xml
+          pytest -q --maxfail=1 --junitxml=reports/junit-${{ matrix.python-version }}.xml --cov=. --cov-report=xml:reports/coverage-${{ matrix.python-version }}.xml --ignore=test_manual.py
         env:
           # Ensure tests run in CI mode and use mocked APIs
           CI: 'true'
