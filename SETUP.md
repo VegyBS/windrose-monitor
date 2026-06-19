@@ -71,7 +71,6 @@ PTERODACTYL_API_TOKEN=your-client-api-token
 PTERODACTYL_SERVER_ID=your-server-uuid
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 CHECK_INTERVAL_SECONDS=20
-CPU_PROFILE_ENABLED=true
 
 ### 4.2 config.json (optional fallback)
 
@@ -141,7 +140,6 @@ Tests cover:
 
 - Player parsing
 - WebSocket behaviour
-- CPU scaling logic
 - Discord formatting
 - Config precedence
 
@@ -149,13 +147,7 @@ Tests cover:
 
 ## 9. Common issues 🧹
 
-### 9.1 Cannot write to sysfs
-
-Ensure the systemd unit includes:
-
-ReadWritePaths=/sys/devices/system/cpu
-
-### 9.2 WebSocket auth failures
+### 9.1 WebSocket auth failures
 
 Check:
 
@@ -171,7 +163,6 @@ At this point, the Windrose Server Monitor should be:
 
 - Running under systemd
 - Tracking players via WebSocket
-- Adjusting CPU profiles
 - Sending Discord notifications
 
 You can now refine behaviour, add metrics, or extend documentation as needed.

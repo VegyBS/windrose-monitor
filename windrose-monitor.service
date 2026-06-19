@@ -15,9 +15,6 @@ WorkingDirectory=/var/lib/windrose-monitor
 # Load environment variables
 EnvironmentFile=/etc/windrose-monitor/.env
 
-# Allow direct CPU scaling
-ReadWritePaths=/sys/devices/system/cpu
-
 # Restart behaviour
 Restart=on-failure
 RestartSec=10
@@ -28,7 +25,7 @@ StandardOutput=append:journal
 StandardError=append:journal
 
 # Security Hardening
-NoNewPrivileges=no
+NoNewPrivileges=yes
 PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=full
