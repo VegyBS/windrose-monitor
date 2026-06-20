@@ -1,140 +1,232 @@
-# Windrose Server Monitor
+# Windrose Server Monitor 🎮🛠️
 
-A comprehensive monitoring system for Windrose servers hosted on Pterodactyl. Automatically manages player tracking, CPU performance profiles, and sends Discord notifications.
+A real‑time monitoring daemon for Windrose servers hosted on Pterodactyl.
 
-## Quick Overview
+It provides:
 
-This project provides:
+- 🎮 Live player tracking via Pterodactyl WebSocket console streaming
+- 👥 Join/leave detection using Connected + Reserved + Disconnected accounts
+- ⚡ Automatic CPU performance scaling (performance when players online, balanced when empty)
+- 🔔 Discord notifications for joins, leaves, and player count changes
+- 🔒 Hardened systemd service with direct sysfs writes (no sudo required)
+- 💾 Persistent state tracking for reliable behaviour across restarts
 
-1. **Player Monitoring** - Tracks when players join/leave by parsing server logs via Pterodactyl API
-2. **CPU Profile Management** - Automatically switches CPU to performance mode when players are online, and balanced mode when the server is empty
-3. **Discord Integration** - Sends real-time notifications to your Discord server when players join/leave
-4. **State Management** - Maintains player state in JSON for reliability and debugging
+---
 
-## Quick Start
+## 🚀 Features
 
-### Clone the Repository
+### 🔌 Real‑time WebSocket monitoring
 
-```bash
-git clone https://github.com/yourusername/windrose-monitor.git
-cd windrose-monitor
-```
+The monitor connects directly to the Pterodactyl Wings WebSocket and receives:
 
-### On Your Ubuntu Server
+- console output events
+- auth success
+- JWT expiry events
+- live log lines
 
-1. **Run the installation script**:
-   ```bash
-   sudo bash install.sh
-   ```
+This eliminates the need for the legacy /logs HTTP endpoint.
 
-2. **Configure with your credentials**:
-   ```bash
-   sudo nano /etc/windrose-monitor/config.json
-   ```
-   - Add your Pterodactyl API token and server ID
-   - Add your Discord webhook URL
+---
 
-3. **Start the service**:
-   ```bash
-   sudo systemctl start windrose-monitor
-   ```
+### 👥 Accurate player detection
 
-4. **Check logs**:
-   ```bash
-   sudo journalctl -u windrose-monitor -f
-   ```
+Windrose exposes three sections:
 
-## Security & Configuration
+- Connected Accounts → fully online
+- Reserved Accounts → loading/transitioning
+- Disconnected Accounts → recently left
 
-**Important**: This repository is safely configured for sharing on GitHub:
+The monitor:
 
-- ✅ `config.example.json` - Shared on GitHub (placeholder values only)
-- ⚠️ `config.json` - Your actual config (in `.gitignore`, never committed)
-- ✅ `.gitignore` - Prevents accidental credential commits
+- Parses all three sections
+- Treats Connected ∪ Reserved as “currently active”
+- Detects “left” players as those previously active but no longer present
 
-When you clone this repository:
-```bash
-# The installer will copy the example config
-sudo bash install.sh
+---
 
-# Then you edit it with your real credentials
-sudo nano /etc/windrose-monitor/config.json
-```
+### ⚡ CPU profile automation (no sudo required)
 
-Your real API tokens and webhook URLs stay private and never go to GitHub.
+The systemd service grants write access to:
 
-## Configuration
+/sys/devices/system/cpu
 
-The `config.json` file contains all settings:
+The monitor writes directly to:
 
-```json
-{
-  "pterodactyl": {
-    "api_url": "https://your-panel.com",
-    "api_token": "YOUR_TOKEN",
-    "server_id": "server-uuid"
-  },
-  "discord": {
-    "webhook_url": "https://discord.com/api/webhooks/..."
-  },
-  "monitoring": {
-    "check_interval_seconds": 20
-  },
-  "cpu_profile": {
-    "enabled": true,
-    "performance_profile": "performance",
-    "balanced_profile": "balance_power"
-  }
-}
-```
+/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference
 
-## How It Works
+No sudo, no tee, no sudoers file.
+Systemd’s ReadWritePaths controls exactly what the service can modify.
 
-```
-1. Every 20 seconds (configurable):
-   ├─ Fetch latest logs from Pterodactyl API
-   ├─ Parse Reserved Accounts section for current players
-   ├─ Compare with previous state
-   ├─ Send Discord notifications for changes
-   ├─ Adjust CPU profile based on player count
-   └─ Save updated state
-```
+---
 
-## Requirements
+### 🔔 Discord notifications
 
-- Python 3.7+
-- Ubuntu/Linux server
-- Pterodactyl panel access
-- Discord webhook
-- Root/sudo access (for CPU frequency scaling)
+The monitor sends Discord messages for:
 
-## Monitoring Features
+- Player joined
+- Player left
+- Player count changed
 
-- ✅ Real-time player join/leave detection
-- ✅ Player count tracking
-- ✅ Automatic CPU performance tuning
-- ✅ Discord webhook notifications
-- ✅ JSON state persistence
-- ✅ Automatic error recovery
-- ✅ Comprehensive logging
+Example output:
 
-## Typical Discord Output
-
-```
 🎮 Player Joined: PlayerName
 📊 Player Count: 1 (was 0)
 👋 Player Left: PlayerName
 📊 Player Count: 0 (was 1)
+
+---
+
+### 🔒 Hardened systemd service
+
+The service unit includes:
+
+- ProtectSystem=strict
+- ProtectHome=true
+- RestrictSUIDSGID=true
+- MemoryDenyWriteExecute=true
+- SystemCallFilter=@system-service
+- ReadWritePaths=/sys/devices/system/cpu
+- NoNewPrivileges=no (required for sysfs writes)
+
+This keeps the monitor tightly sandboxed while still allowing CPU profile control.
+
+---
+
+## 📦 Installation
+
+Clone the repository and run the installer:
+
+sudo bash install.sh
+
+The installer:
+
+- Creates the windrose-monitor service user
+- Creates /var/lib/windrose-monitor and /etc/windrose-monitor
+- Sets up a Python virtual environment
+- Installs Python dependencies
+- Installs the systemd service
+- Copies .env.example → /etc/windrose-monitor/.env
+- Copies config.example.json → /etc/windrose-monitor/config.json
+
+---
+
+## ⚙ Configuration
+
+### Primary configuration: .env
+
+Edit:
+
+sudo nano /etc/windrose-monitor/.env
+
+Required:
+
+PTERODACTYL_API_URL=https://panel.example.com
+PTERODACTYL_API_TOKEN=your-client-api-token
+PTERODACTYL_SERVER_ID=your-server-uuid
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+CHECK_INTERVAL_SECONDS=20
+CPU_PROFILE_ENABLED=true
+
+### Fallback configuration: config.json
+
+If .env is missing or incomplete, the monitor can fall back to config.json.
+
+Configuration precedence:
+
+1. .env
+2. config.json
+3. Built‑in defaults
+
+---
+
+## 🖥 Running & Logs
+
+Start:
+
+sudo systemctl start windrose-monitor
+
+Enable on boot:
+
+sudo systemctl enable windrose-monitor
+
+Status:
+
+sudo systemctl status windrose-monitor
+
+Logs:
+
+sudo journalctl -u windrose-monitor -f
+
+State file:
+
+/var/lib/windrose-monitor/state.json
+
+---
+
+## 🌐 WebSocket behaviour
+
+The monitor:
+
+1. Requests a temporary WebSocket token
+2. Connects to the Wings WebSocket endpoint
+3. Sends an auth event
+4. Receives console output events
+5. Buffers log lines in memory
+6. Parses player sections
+7. Detects stale sockets
+8. Reconnects automatically
+
+If WebSocket is unavailable, it can fall back to the legacy /logs endpoint (if enabled).
+
+---
+
+## 🧪 Testing
+
+Run all tests:
+
+python -m unittest discover -s . -p 'test_*.py' -v
+
+Tests cover:
+
+- Player list parsing
+- Player state detection
+- CPU profile logic
+- Config precedence
+- Discord formatting
+- WebSocket behaviour (mocked)
+
+---
+
+## 🔐 Security
+
+- Runs as dedicated windrose-monitor user
+- No sudo usage
+- No setuid binaries
+- Direct sysfs writes controlled via systemd
+- Secrets stored in /etc/windrose-monitor/.env
+- Systemd hardening enabled
+
+---
+
+## 📁 Directory Layout
 ```
+/var/lib/windrose-monitor/
+  ├── windrose-monitor.py
+  ├── venv/
+  └── state.json
 
-## Support & Troubleshooting
+/etc/windrose-monitor/
+  ├── .env
+  └── config.json
 
-See [SETUP.md](SETUP.md) for detailed troubleshooting steps including:
-- API connection issues
-- Discord webhook problems
-- CPU frequency scaling issues
-- Permission errors
+/var/log/windrose-monitor/
+  └── windrose-monitor.log
 
-## License
+/etc/systemd/system/
+  └── windrose-monitor.service
+```
+---
 
-MIT License - Feel free to modify and use for your server monitoring needs.
+## 📄 License
+
+MIT License

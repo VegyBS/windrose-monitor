@@ -1,6 +1,6 @@
 [Unit]
 Description=Windrose Server Monitor
-Documentation=https://github.com/yourusername/windrose-monitor
+Documentation=https://github.com/VegyBS/windrose-monitor
 After=network-online.target
 Wants=network-online.target
 
@@ -8,19 +8,47 @@ Wants=network-online.target
 Type=simple
 User=windrose-monitor
 Group=windrose-monitor
-ExecStart=/usr/local/bin/windrose-monitor
+
+# Ensure predictable working directory
+WorkingDirectory=/var/lib/windrose-monitor
+
+# Load environment variables
+EnvironmentFile=/etc/windrose-monitor/.env
+
+# Allow direct CPU scaling
+ReadWritePaths=/sys/devices/system/cpu
+
+# Restart behaviour
 Restart=on-failure
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
 SyslogIdentifier=windrose-monitor
 
-# Security settings
-NoNewPrivileges=true
-PrivateTmp=true
+# File logging
+StandardOutput=append:journal
+StandardError=append:journal
 
-# Allow sudo for CPU frequency scaling without password
-# This service will need passwordless sudo for tee command
+# Security Hardening
+NoNewPrivileges=no
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelTunables=false
+ProtectKernelModules=false
+ProtectKernelLogs=false
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=CAP_SYS_ADMIN
+AmbientCapabilities=CAP_SYS_ADMIN
+SystemCallFilter=@system-service
+
+
+# Start the monitor using the venv
+ExecStart=/var/lib/windrose-monitor/venv/bin/python /var/lib/windrose-monitor/windrose-monitor.py
 
 [Install]
 WantedBy=multi-user.target
