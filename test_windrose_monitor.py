@@ -177,34 +177,6 @@ class TestPlayerStateDetection(unittest.TestCase):
         self.assertEqual(left_players, {'OldPlayer1', 'OldPlayer2'})
 
 
-class TestCPUProfileLogic(unittest.TestCase):
-    """Test CPU profile switching logic"""
-
-    def test_switch_to_performance_when_players_join(self):
-        current_count = 1
-        current_profile = 'balanced'
-        should_switch_to_performance = current_count > 0 and current_profile != 'performance'
-        self.assertTrue(should_switch_to_performance)
-
-    def test_switch_to_balanced_when_players_leave(self):
-        current_count = 0
-        current_profile = 'performance'
-        should_switch_to_balanced = current_count == 0 and current_profile != 'balanced'
-        self.assertTrue(should_switch_to_balanced)
-
-    def test_no_switch_needed_performance_active(self):
-        current_count = 1
-        current_profile = 'performance'
-        should_switch = current_count > 0 and current_profile != 'performance'
-        self.assertFalse(should_switch)
-
-    def test_no_switch_needed_balanced_active(self):
-        current_count = 0
-        current_profile = 'balanced'
-        should_switch = current_count == 0 and current_profile != 'balanced'
-        self.assertFalse(should_switch)
-
-
 class TestConfigValidation(unittest.TestCase):
     """Test configuration file handling"""
 
@@ -220,15 +192,11 @@ class TestConfigValidation(unittest.TestCase):
             },
             'monitoring': {
                 'check_interval_seconds': 20
-            },
-            'cpu_profile': {
-                'enabled': True
             }
         }
         self.assertIn('pterodactyl', config)
         self.assertIn('discord', config)
         self.assertIn('monitoring', config)
-        self.assertIn('cpu_profile', config)
         self.assertIn('api_url', config['pterodactyl'])
         self.assertIn('api_token', config['pterodactyl'])
         self.assertIn('server_id', config['pterodactyl'])
@@ -278,20 +246,17 @@ class TestStateManagement(unittest.TestCase):
         state = {
             'players': [],
             'player_count': 0,
-            'last_update': None,
-            'cpu_profile': 'balanced'
+            'last_update': None
         }
         self.assertIsInstance(state['players'], list)
         self.assertEqual(state['player_count'], 0)
         self.assertIsNone(state['last_update'])
-        self.assertEqual(state['cpu_profile'], 'balanced')
 
     def test_state_update_with_players(self):
         state = {
             'players': [],
             'player_count': 0,
-            'last_update': None,
-            'cpu_profile': 'balanced'
+            'last_update': None
         }
         current_players = {'Player1', 'Player2'}
         state['players'] = list(current_players)

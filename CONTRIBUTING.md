@@ -15,7 +15,6 @@ You can help the project by:
 - Improving documentation
 - Adding tests
 - Enhancing WebSocket handling
-- Improving CPU scaling logic
 - Adding new configuration options
 - Refactoring code for clarity or reliability
 
@@ -64,7 +63,6 @@ Clone it onto your development machine.
 Use descriptive names such as:
 
 feature/websocket-retry
-fix/cpu-profile-permissions
 docs/update-setup-guide
 
 ### Make your changes
@@ -143,7 +141,6 @@ Use clear, meaningful commit messages.
 Examples:
 
 Fix WebSocket reconnect loop
-Add CPU profile fallback for missing sysfs entries
 Improve Discord error handling
 Update documentation for new config options
 
@@ -185,7 +182,6 @@ Because the monitor interacts with:
 - Pterodactyl API tokens
 - Discord webhooks
 - Systemd
-- sysfs CPU controls
 
 Contributors must:
 

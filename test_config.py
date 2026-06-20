@@ -17,7 +17,7 @@ CI_MODE = os.getenv('CI', 'false').lower() == 'true'
 
 def load_config_from_env() -> dict:
     """Load configuration from environment variables
-    
+
     Used in CI mode when config files don't exist
     """
     return {
@@ -35,19 +35,14 @@ def load_config_from_env() -> dict:
                 'reserved_accounts_header': 'Reserved Accounts',
                 'disconnected_accounts_header': 'Disconnected Accounts'
             }
-        },
-        'cpu_profile': {
-            'enabled': os.getenv('CPU_PROFILE_ENABLED', 'true').lower() == 'true',
-            'performance_profile': os.getenv('CPU_PROFILE_PERFORMANCE', 'performance'),
-            'balanced_profile': os.getenv('CPU_PROFILE_BALANCED', 'balance_power'),
-            'cpu_freq_path': os.getenv('CPU_FREQ_PATH', '/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference')
         }
     }
 
+@pytest.mark.skipif(os.getenv('CI', 'false').lower() == 'true', reason="Test needs a configuration file that's not available in CI environment")
 def test_config(config_path: str):
     """Test if configuration file is valid"""
     print("Testing configuration file...")
-    
+
     try:
         with open(config_path, 'r') as f:
             config = json.load(f)
@@ -62,24 +57,24 @@ def test_config(config_path: str):
 
 def test_pterodactyl_api(config: dict):
     """Test Pterodactyl API connectivity
-    
+
     In CI mode: Validates structure without real API calls
     Local mode: Tests actual connectivity
     """
     print("\nTesting Pterodactyl API...")
-    
+
     try:
         import requests
     except ImportError:
         print("  ✗ requests module not installed")
         print("    Run: pip3 install requests")
         return False
-    
+
     try:
         api_url = config['pterodactyl']['api_url']
         api_token = config['pterodactyl']['api_token']
         server_id = config['pterodactyl']['server_id']
-        
+
         if not api_token or api_token == "YOUR_API_TOKEN_HERE" or api_token == "your-api-token-here":
             if CI_MODE:
                 print("  ⊘ Skipping real API test (CI mode)")
@@ -88,10 +83,10 @@ def test_pterodactyl_api(config: dict):
             else:
                 print("  ✗ API token not configured")
                 return False
-        
+
         headers = {'Authorization': f"Bearer {api_token}"}
         url = f"{api_url}/api/client/servers/{server_id}/logs"
-        
+
         if CI_MODE:
             # In CI mode, just validate the structure
             print("  ⊘ Skipping real API call (CI mode)")
@@ -99,11 +94,11 @@ def test_pterodactyl_api(config: dict):
             print(f"  ✓ Server ID: {server_id}")
             print(f"  ✓ API token format: valid")
             return True
-        
+
         # Local mode: test real connectivity
         print(f"  Testing connection to: {api_url}")
         response = requests.get(url, headers=headers, timeout=5)
-        
+
         if response.status_code == 200:
             print("  ✓ Pterodactyl API connection successful")
             data = response.json()
@@ -125,21 +120,21 @@ def test_pterodactyl_api(config: dict):
 
 def test_discord_webhook(config: dict):
     """Test Discord webhook connectivity
-    
+
     In CI mode: Validates structure without real API calls
     Local mode: Tests actual connectivity
     """
     print("\nTesting Discord Webhook...")
-    
+
     try:
         import requests
     except ImportError:
         print("  ✗ requests module not installed")
         return False
-    
+
     try:
         webhook_url = config['discord']['webhook_url']
-        
+
         if not webhook_url or webhook_url == "YOUR_WEBHOOK_URL" or webhook_url == "https://discord.com/api/webhooks/YOUR_ID/YOUR_TOKEN":
             if CI_MODE:
                 print("  ⊘ Skipping real webhook test (CI mode)")
@@ -148,22 +143,22 @@ def test_discord_webhook(config: dict):
             else:
                 print("  ✗ Webhook URL not configured")
                 return False
-        
+
         if CI_MODE:
             # In CI mode, just validate the structure
             print("  ⊘ Skipping real webhook call (CI mode)")
             print(f"  ✓ Webhook URL format: valid")
             return True
-        
+
         # Local mode: test real connectivity
         payload = {
             'content': '🧪 Test message from Windrose Monitor setup',
             'username': 'Windrose Monitor'
         }
-        
+
         print(f"  Sending test message...")
         response = requests.post(webhook_url, json=payload, timeout=5)
-        
+
         if response.status_code == 204:
             print("  ✓ Discord webhook working")
             return True
@@ -177,44 +172,9 @@ def test_discord_webhook(config: dict):
         print(f"  ✗ Error: {e}")
         return False
 
-def test_cpu_frequency_scaling():
-    """Test CPU frequency scaling capability
-    
-    In CI mode: Skipped (not applicable in GitHub Actions)
-    Local mode: Tests actual availability
-    """
-    if CI_MODE:
-        print("\nTesting CPU Frequency Scaling...")
-        print("  ⊘ Skipped in CI mode (infrastructure test)")
-        print("  ✓ Validation skipped - will be tested on actual server")
-        return True
-    
-    print("\nTesting CPU Frequency Scaling...")
-    
-    try:
-        cpu_path = '/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference'
-        
-        with open(cpu_path, 'r') as f:
-            current = f.read().strip()
-        print(f"  ✓ CPU frequency scaling available")
-        print(f"  Current profile: {current}")
-        return True
-    except FileNotFoundError:
-        print("  ✗ CPU frequency scaling not available")
-        print("    Your CPU might not support energy_performance_preference")
-        print("    You can disable this in config.json")
-        return False
-    except PermissionError:
-        print("  ⚠ CPU frequency scaling needs root access")
-        print("    This will work when run via systemd service")
-        return True
-    except Exception as e:
-        print(f"  ✗ Error: {e}")
-        return False
-
 def test_state_file_permissions():
     """Test state file directory permissions
-    
+
     In CI mode: Skipped (not applicable in GitHub Actions)
     Local mode: Tests actual permissions
     """
@@ -223,18 +183,18 @@ def test_state_file_permissions():
         print("  ⊘ Skipped in CI mode (infrastructure test)")
         print("  ✓ Validation skipped - will be tested on actual server")
         return True
-    
+
     print("\nTesting State File Permissions...")
-    
+
     try:
         state_dir = Path('/var/lib/windrose-monitor')
-        
+
         if not state_dir.exists():
             print(f"  ✗ State directory doesn't exist: {state_dir}")
             print(f"    Run: sudo mkdir -p {state_dir}")
             print(f"    Run: sudo chown windrose-monitor:windrose-monitor {state_dir}")
             return False
-        
+
         test_file = state_dir / '.write_test'
         try:
             test_file.write_text('test')
@@ -254,13 +214,13 @@ def main():
     print("\n" + "=" * 60)
     print("  Windrose Monitor - Configuration Test")
     print("=" * 60)
-    
+
     if CI_MODE:
         print("  Mode: CI/GitHub Actions (mocked APIs)")
     else:
         print("  Mode: Local (real API tests)")
     print("")
-    
+
     # In CI mode, load config from environment variables
     if CI_MODE:
         config = load_config_from_env()
@@ -277,27 +237,26 @@ def main():
             './config.json',
             Path(__file__).parent / 'config.json'
         ]
-        
+
         config = None
         for path in config_paths:
             if Path(path).exists():
                 config = test_config(str(path))
                 if config:
                     break
-        
+
         if not config:
             print("\n✗ Could not find configuration file")
             print("  Try running from the installation directory")
             sys.exit(1)
-    
+
     # Run tests
     tests = [
         ("Pterodactyl API", lambda: test_pterodactyl_api(config)),
         ("Discord Webhook", lambda: test_discord_webhook(config)),
-        ("CPU Frequency Scaling", test_cpu_frequency_scaling),
         ("State File Permissions", test_state_file_permissions),
     ]
-    
+
     results = []
     for test_name, test_func in tests:
         try:
@@ -306,21 +265,21 @@ def main():
         except Exception as e:
             print(f"\n✗ Test error: {e}")
             results.append((test_name, False))
-    
+
     # Summary
     print("\n" + "=" * 60)
     print("  Test Summary")
     print("=" * 60)
-    
+
     passed = sum(1 for _, result in results if result)
     total = len(results)
-    
+
     for name, result in results:
         status = "✓ PASS" if result else "✗ FAIL"
         print(f"  {status}: {name}")
-    
+
     print(f"\n  Result: {passed}/{total} tests passed")
-    
+
     if passed == total:
         print("\n✓ Configuration is ready!")
         print("\n  Next steps:")
