@@ -38,7 +38,7 @@ Windrose exposes three sections:
 The monitor:
 
 - Parses all three sections
-- Treats Connected ∪ Reserved as “currently active”
+- Treats Connected & Reserved as “currently active”
 - Detects “left” players as those previously active but no longer present
 
 ---
@@ -53,10 +53,10 @@ The monitor sends Discord messages for:
 
 Example output:
 
-🎮 Player Joined: PlayerName
-📊 Player Count: 1 (was 0)
-👋 Player Left: PlayerName
-📊 Player Count: 0 (was 1)
+ - 🎮 Player Joined: PlayerName
+ - 📊 Player Count: 1 (was 0)
+ - 👋 Player Left: PlayerName
+ - 📊 Player Count: 0 (was 1)
 
 ---
 
