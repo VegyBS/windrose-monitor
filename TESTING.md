@@ -1,6 +1,6 @@
 # Windrose Monitor Testing Guide 🧪🔍
 
-This document describes how to test the Windrose Server Monitor to ensure it behaves correctly, handles WebSocket events reliably, and responds safely to real‑world conditions such as disconnects, token expiry, and CPU profile changes.
+This document describes how to test the Windrose Server Monitor to ensure it behaves correctly, handles WebSocket events reliably, and responds safely to real‑world conditions such as disconnects, and token expiry.
 
 The tests are designed to run on the Linux host where the monitor is installed, but many can also be executed from a development machine.
 
@@ -14,7 +14,6 @@ The test suite covers the following areas:
 - Join and leave detection
 - WebSocket connection and reconnection logic
 - Token refresh behaviour
-- CPU profile switching
 - Discord message formatting
 - Configuration precedence
 - State file handling
@@ -87,19 +86,7 @@ These tests ensure the monitor stays connected even when Wings is unstable.
 
 ---
 
-### 3.4 CPU Profile Switching
-
-Tests verify:
-
-- Switching to performance mode when players join
-- Switching to balanced mode when the server empties
-- Writing to the correct sysfs paths
-- Handling missing or read‑only sysfs entries
-- State persistence across restarts
-
----
-
-### 3.5 Discord Notification Formatting
+### 3.6 Discord Notification Formatting
 
 Tests validate:
 
@@ -111,7 +98,7 @@ Tests validate:
 
 ---
 
-### 3.6 Configuration Precedence
+### 3.7 Configuration Precedence
 
 Tests ensure:
 
@@ -122,7 +109,7 @@ Tests ensure:
 
 ---
 
-### 3.7 State File Handling
+### 3.8 State File Handling
 
 Tests cover:
 
@@ -143,7 +130,6 @@ Start your Windrose server and join it.
 Check:
 
 - Discord receives a join message
-- CPU profile switches to performance
 - state.json updates
 
 ### 4.2 Simulate a Player Leave
@@ -152,7 +138,6 @@ Leave the server.
 Check:
 
 - Discord receives a leave message
-- CPU profile switches to balanced
 - state.json updates
 
 ### 4.3 Restart the Monitor
@@ -187,7 +172,6 @@ Look for:
 - WebSocket events
 - Reconnect attempts
 - Player detection
-- CPU profile changes
 - Errors or warnings
 
 ---
@@ -196,9 +180,6 @@ Look for:
 
 ### WebSocket fails to authenticate
 Check `PTERODACTYL_API_TOKEN` and `PTERODACTYL_SERVER_ID`.
-
-### CPU profile does not change
-Ensure the systemd unit includes ReadWritePaths for sysfs.
 
 ### Discord messages not sent
 Verify `DISCORD_WEBHOOK_URL` and network connectivity.

@@ -88,12 +88,6 @@ class WindroseMonitor:
             'monitoring': {
                 'check_interval_seconds': int(os.getenv('CHECK_INTERVAL_SECONDS', '20'))
             },
-            'cpu_profile': {
-                'enabled': os.getenv('CPU_PROFILE_ENABLED', 'true').lower() == 'true',
-                'performance_profile': os.getenv('CPU_PROFILE_PERFORMANCE', 'performance'),
-                'balanced_profile': os.getenv('CPU_PROFILE_BALANCED', 'balance_power'),
-                'cpu_freq_path': os.getenv('CPU_FREQ_PATH', '/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference')
-            },
             'state_file': os.getenv('STATE_FILE', '/var/lib/windrose-monitor/state.json')
         }
 
@@ -144,9 +138,6 @@ class WindroseMonitor:
         state.setdefault('players', [])  # list of AccountIds
         state.setdefault('players_meta', {})  # { account_id: {name, last_seen, state} }
         state.setdefault('player_count', 0)
-        state.setdefault('cpu_profile', 'balanced')
-        state.setdefault('performance_counter', 0)
-        state.setdefault('balanced_counter', 0)
         state.setdefault('last_update', None)
         # Counter to tolerate a single transient empty snapshot
         state.setdefault('empty_snapshot_counter', 0)
@@ -378,35 +369,6 @@ class WindroseMonitor:
 
         return active_by_id, found_any_section
 
-    def set_cpu_profile(self, profile: str) -> bool:
-        if not self.config['cpu_profile']['enabled']:
-            return True
-        try:
-            cpu_path_template = self.config['cpu_profile']['cpu_freq_path'].replace('cpu0', 'cpu{}')
-            sys_cpu_path = '/sys/devices/system/cpu'
-            cpu_count = 0
-            for cpu_dir in Path(sys_cpu_path).glob('cpu[0-9]*'):
-                try:
-                    int(cpu_dir.name.replace('cpu', ''))
-                    cpu_count += 1
-                except Exception:
-                    continue
-            success = True
-            for i in range(cpu_count):
-                cpu_freq_path = cpu_path_template.format(i)
-                try:
-                    with open(cpu_freq_path, "w") as f:
-                        f.write(profile)
-                except Exception as e:
-                    logger.warning(f"Failed to set CPU {i} to {profile}: {e}")
-                    success = False
-            if success:
-                self.state['cpu_profile'] = profile
-            return success
-        except Exception as e:
-            logger.error(f"Error changing CPU profile: {e}")
-            return False
-
     def send_discord_message(self, message: str) -> bool:
         webhook = self.config['discord'].get('webhook_url')
         if not webhook:
@@ -502,20 +464,6 @@ class WindroseMonitor:
 
         self.state['player_count'] = current_count
         self.state['last_update'] = now
-
-        # CPU hysteresis
-        if current_count > 0:
-            self.state['performance_counter'] = self.state.get('performance_counter', 0) + 1
-            self.state['balanced_counter'] = 0
-            if self.state['performance_counter'] >= 2 and self.state.get('cpu_profile') != 'performance':
-                logger.info("Switching to performance CPU profile")
-                self.set_cpu_profile(self.config['cpu_profile']['performance_profile'])
-        else:
-            self.state['balanced_counter'] = self.state.get('balanced_counter', 0) + 1
-            self.state['performance_counter'] = 0
-            if self.state['balanced_counter'] >= 3 and self.state.get('cpu_profile') != 'balanced':
-                logger.info("Switching to balanced CPU profile")
-                self.set_cpu_profile(self.config['cpu_profile']['balanced_profile'])
 
         self._save_state()
 

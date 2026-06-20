@@ -6,7 +6,6 @@ It provides:
 
 - 🎮 Live player tracking via Pterodactyl WebSocket console streaming
 - 👥 Join/leave detection using Connected + Reserved + Disconnected accounts
-- ⚡ Automatic CPU performance scaling (performance when players online, balanced when empty)
 - 🔔 Discord notifications for joins, leaves, and player count changes
 - 🔒 Hardened systemd service with direct sysfs writes (no sudo required)
 - 💾 Persistent state tracking for reliable behaviour across restarts
@@ -44,21 +43,6 @@ The monitor:
 
 ---
 
-### ⚡ CPU profile automation (no sudo required)
-
-The systemd service grants write access to:
-
-/sys/devices/system/cpu
-
-The monitor writes directly to:
-
-/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference
-
-No sudo, no tee, no sudoers file.
-Systemd’s ReadWritePaths controls exactly what the service can modify.
-
----
-
 ### 🔔 Discord notifications
 
 The monitor sends Discord messages for:
@@ -85,10 +69,9 @@ The service unit includes:
 - RestrictSUIDSGID=true
 - MemoryDenyWriteExecute=true
 - SystemCallFilter=@system-service
-- ReadWritePaths=/sys/devices/system/cpu
-- NoNewPrivileges=no (required for sysfs writes)
+- NoNewPrivileges=yes
 
-This keeps the monitor tightly sandboxed while still allowing CPU profile control.
+This keeps the monitor tightly sandboxed.
 
 ---
 
@@ -125,7 +108,6 @@ PTERODACTYL_API_TOKEN=your-client-api-token
 PTERODACTYL_SERVER_ID=your-server-uuid
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 CHECK_INTERVAL_SECONDS=20
-CPU_PROFILE_ENABLED=true
 
 ### Fallback configuration: config.json
 
@@ -190,7 +172,6 @@ Tests cover:
 
 - Player list parsing
 - Player state detection
-- CPU profile logic
 - Config precedence
 - Discord formatting
 - WebSocket behaviour (mocked)
